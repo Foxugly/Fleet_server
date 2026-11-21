@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from drf_spectacular.utils import extend_schema
 from rest_framework import permissions, response, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.request import Request
@@ -14,9 +15,16 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from apps.api_auth import mfa, refresh_cookie
 from apps.api_auth.refresh_cookie import PERSIST_CLAIM, deliver_tokens
 from apps.api_auth.serializers import (
+    ErrorSerializer,
+    LoginResponseSerializer,
     LoginSerializer,
+    MeResponseSerializer,
     MfaCodeSerializer,
+    MfaSetupResponseSerializer,
     MfaTokenSerializer,
+    RefreshRequestSerializer,
+    TokenRefreshResponseSerializer,
+    TokenResponseSerializer,
     UserSerializer,
 )
 from apps.api_auth.throttles import (
@@ -93,6 +101,11 @@ class LoginView(APIView):
     # forged X-Forwarded-For prefix changes nothing) and per username.
     throttle_classes = [LoginRateThrottle, LoginUsernameRateThrottle]
 
+    @extend_schema(
+        operation_id="auth_login",
+        request=LoginSerializer,
+        responses={200: LoginResponseSerializer, 400: ErrorSerializer},
+    )
     def post(self, request: Request) -> response.Response:
         if (rejected := refresh_cookie.cookie_origin_guard(request)) is not None:
             return rejected
@@ -131,6 +144,11 @@ class MfaSetupView(APIView):
     authentication_classes: list[type[Any]] = []
     throttle_classes = [AnonRateThrottle]
 
+    @extend_schema(
+        operation_id="auth_mfa_setup",
+        request=MfaTokenSerializer,
+        responses={200: MfaSetupResponseSerializer, 400: ErrorSerializer},
+    )
     def post(self, request: Request) -> response.Response:
         if (rejected := refresh_cookie.cookie_origin_guard(request)) is not None:
             return rejected
@@ -157,6 +175,11 @@ class MfaSetupConfirmView(_MfaCodeView):
     The 10 recovery codes are in this response and nowhere else, ever.
     """
 
+    @extend_schema(
+        operation_id="auth_mfa_setup_confirm",
+        request=MfaCodeSerializer,
+        responses={200: TokenResponseSerializer, 400: ErrorSerializer},
+    )
     def post(self, request: Request) -> response.Response:
         if (rejected := refresh_cookie.cookie_origin_guard(request)) is not None:
             return rejected
@@ -177,6 +200,11 @@ class MfaSetupConfirmView(_MfaCodeView):
 class MfaVerifyView(_MfaCodeView):
     """A TOTP code (or a one-time recovery code) completes the login."""
 
+    @extend_schema(
+        operation_id="auth_mfa_verify",
+        request=MfaCodeSerializer,
+        responses={200: TokenResponseSerializer, 400: ErrorSerializer},
+    )
     def post(self, request: Request) -> response.Response:
         if (rejected := refresh_cookie.cookie_origin_guard(request)) is not None:
             return rejected
@@ -209,6 +237,11 @@ class TokenRefreshView(APIView):
         # SPA ends the session on 401/403 alike, but 401 is the honest answer.
         return 'Bearer realm="api"'
 
+    @extend_schema(
+        operation_id="auth_refresh",
+        request=RefreshRequestSerializer,
+        responses={200: TokenRefreshResponseSerializer, 401: ErrorSerializer},
+    )
     def post(self, request: Request) -> response.Response:
         if (rejected := refresh_cookie.cookie_origin_guard(request)) is not None:
             return rejected
@@ -237,6 +270,11 @@ class TokenRefreshView(APIView):
 
 
 class MeView(APIView):
+    @extend_schema(
+        operation_id="auth_me",
+        request=None,
+        responses={200: MeResponseSerializer},
+    )
     def get(self, request: Request) -> response.Response:
         return response.Response({"user": UserSerializer(request.user).data})
 
@@ -251,6 +289,11 @@ class LogoutView(APIView):
 
     permission_classes = [IsAuthenticatedOrCookieMode]
 
+    @extend_schema(
+        operation_id="auth_logout",
+        request=RefreshRequestSerializer,
+        responses={204: None, 400: ErrorSerializer},
+    )
     def post(self, request: Request) -> response.Response:
         if (rejected := refresh_cookie.cookie_origin_guard(request)) is not None:
             return rejected

@@ -62,7 +62,7 @@ def _subject_view(source: str, subject: str) -> dict[str, Any]:
 
 
 class OverviewView(APIView):
-    @extend_schema(responses=OverviewSerializer)
+    @extend_schema(operation_id="overview_retrieve", responses=OverviewSerializer)
     def get(self, request: Request) -> Response:
         now = timezone.now()
         sites = []
@@ -82,7 +82,7 @@ class OverviewView(APIView):
 
 
 class SiteDetailView(APIView):
-    @extend_schema(responses=SiteDetailSerializer)
+    @extend_schema(operation_id="site_retrieve", responses=SiteDetailSerializer)
     def get(self, request: Request, slug: str) -> Response:
         try:
             site = get_site(slug)
@@ -109,7 +109,7 @@ class SiteDetailView(APIView):
 
 
 class BoxView(APIView):
-    @extend_schema(responses=BoxSerializer)
+    @extend_schema(operation_id="box_retrieve", responses=BoxSerializer)
     def get(self, request: Request) -> Response:
         return Response(
             {
@@ -123,7 +123,9 @@ class RefreshView(APIView):
     throttle_classes = [UserRateThrottle, ScopedRateThrottle]
     throttle_scope = "refresh"
 
-    @extend_schema(request=None, responses={202: QueuedSerializer})
+    @extend_schema(
+        operation_id="refresh_create", request=None, responses={202: QueuedSerializer}
+    )
     def post(self, request: Request, source: str) -> Response:
         task_name = REFRESH_TASKS.get(source)
         if task_name is None:

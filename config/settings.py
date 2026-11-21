@@ -5,6 +5,7 @@ import secrets
 from datetime import timedelta
 from pathlib import Path
 
+import corsheaders.defaults
 from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -57,6 +58,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "corsheaders",
     "rest_framework",
     "drf_spectacular",
     "rest_framework_simplejwt.token_blacklist",
@@ -69,6 +71,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -257,6 +260,9 @@ CORS_ALLOWED_ORIGINS = _env_list(
 )
 if "*" in CORS_ALLOWED_ORIGINS:
     raise ImproperlyConfigured("CORS_ALLOWED_ORIGINS must list explicit origins")
+# The SPA sends the HttpOnly refresh cookie and the cookie-mode opt-in header.
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = (*corsheaders.defaults.default_headers, "x-auth-mode")
 
 # HttpOnly refresh cookie (web SPA only, opt-in via `X-Auth-Mode: cookie`).
 AUTH_REFRESH_COOKIE_NAME = _env("AUTH_REFRESH_COOKIE_NAME", "fleet_refresh")

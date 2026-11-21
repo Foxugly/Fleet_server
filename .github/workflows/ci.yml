@@ -107,6 +107,10 @@ jobs:
         run: ruff check .
       - name: Migrations are in sync with the models
         run: python manage.py makemigrations --check --dry-run
+      - name: Schema is committed
+        run: >-
+          python manage.py spectacular --file /tmp/schema.yaml --validate
+          && diff -u --strip-trailing-cr openapi-schema.yaml /tmp/schema.yaml
       - name: Tests
         run: pytest -q
 
