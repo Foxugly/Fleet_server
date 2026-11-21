@@ -128,7 +128,27 @@ STATIC_ROOT = str(BASE_DIR / "staticfiles")
 REDIS_URL = _env("REDIS_URL", "redis://127.0.0.1:6379/12")
 CELERY_BROKER_URL = REDIS_URL
 CELERY_RESULT_BACKEND = REDIS_URL
-CELERY_TIMEZONE = TIME_ZONE
+CELERY_TIMEZONE = "UTC"
+CELERY_TASK_TIME_LIMIT = 600
+CELERY_TASK_SOFT_TIME_LIMIT = 540
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+
+from apps.collect.intervals import INTERVALS, PURGE_INTERVAL  # noqa: E402
+
+CELERY_BEAT_SCHEDULE = {
+    name: {"task": task, "schedule": float(INTERVALS[key])}
+    for name, task, key in (
+        ("collect-health", "collect_health", "health"),
+        ("collect-github", "collect_github", "github"),
+        ("collect-sentry", "collect_sentry", "sentry"),
+        ("collect-box", "collect_box_task", "box"),
+        ("collect-deps", "collect_deps", "deps"),
+    )
+}
+CELERY_BEAT_SCHEDULE["purge-snapshots"] = {
+    "task": "purge_snapshots",
+    "schedule": float(PURGE_INTERVAL),
+}
 
 # Fleet-specific settings (used by the collectors added in later tasks).
 FLEET_GITHUB_READ_TOKEN = _env("FLEET_GITHUB_READ_TOKEN")
