@@ -20,3 +20,4 @@ htmlcov/
 # IDE
 .idea/
 .vscode/
+.pytest_tmp/
