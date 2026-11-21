@@ -139,11 +139,30 @@ def test_other_error_is_source_error_without_token():
     assert "secret-token" not in str(exc.value)
 
 
+def run(name, sha, conclusion, created, *, event="push", n=1):
+    return {
+        "name": name,
+        "event": event,
+        "head_sha": sha,
+        "conclusion": conclusion,
+        "html_url": f"https://github.com/Foxugly/x/actions/runs/{n}",
+        "created_at": created,
+    }
+
+
+def main_run_of(runs):
+    mock_all(**{"/actions/runs": {"workflow_runs": runs}})
+    out = collect_repo("Foxugly/x", token="tok")["main_run"]
+    call = next(c for c in responses.calls if "/actions/runs" in c.request.url)
+    return out, call.request.params
+
+
 @responses.activate
 def test_main_run_skips_codeql():
     mock_all()
-    run = collect_repo("Foxugly/x", token="tok")["main_run"]
-    assert run["workflow"] == "CI" and run["conclusion"] == "failure"
+    run_ = collect_repo("Foxugly/x", token="tok")["main_run"]
+    assert run_["workflow"] == "CI" and run_["conclusion"] == "failure"
+    assert run_["sha"] == "s1"
 
 
 @responses.activate
@@ -151,6 +170,91 @@ def test_main_run_none_when_only_codeql():
     runs = {"workflow_runs": [fx("runs")["workflow_runs"][0]]}
     mock_all(**{"/actions/runs": runs})
     assert collect_repo("Foxugly/x", token="tok")["main_run"] is None
+
+
+@responses.activate
+def test_main_run_query_is_push_on_main_completed():
+    _, params = main_run_of([])
+    assert params["branch"] == "main"
+    assert params["event"] == "push"
+    assert params["status"] == "completed"
+
+
+@responses.activate
+def test_main_run_newer_dependabot_run_does_not_hide_failed_ci():
+    out, _ = main_run_of(
+        [
+            run(
+                "Dependabot Updates",
+                "s1",
+                "success",
+                "2026-11-20T10:00:00Z",
+                event="dynamic",
+                n=9,
+            ),
+            run("Deploy", "s1", "success", "2026-11-19T10:05:00Z", n=2),
+            run("CI", "s1", "failure", "2026-11-19T10:00:00Z", n=1),
+        ]
+    )
+    assert out == {
+        "sha": "s1",
+        "conclusion": "failure",
+        "url": "https://github.com/Foxugly/x/actions/runs/1",
+        "workflow": "CI",
+        "created_at": "2026-11-19T10:00:00Z",
+    }
+
+
+@responses.activate
+def test_main_run_fork_pull_request_on_branch_main_is_ignored():
+    out, params = main_run_of(
+        [
+            run(
+                "CI",
+                "fork",
+                "success",
+                "2026-11-20T10:00:00Z",
+                event="pull_request",
+                n=5,
+            ),
+            run("CI", "s1", "failure", "2026-11-19T10:00:00Z", n=1),
+        ]
+    )
+    assert params["event"] == "push"
+    assert out["sha"] == "s1" and out["conclusion"] == "failure"
+
+
+@responses.activate
+def test_main_run_only_newest_sha_counts():
+    out, _ = main_run_of(
+        [
+            run("CI", "new", "success", "2026-11-20T10:00:00Z", n=3),
+            run("CI", "old", "failure", "2026-11-19T10:00:00Z", n=1),
+        ]
+    )
+    assert out["sha"] == "new" and out["conclusion"] == "success"
+    assert out["url"].endswith("/3")
+
+
+@pytest.mark.parametrize(
+    "bad", ["startup_failure", "cancelled", "timed_out", "action_required", None]
+)
+@responses.activate
+def test_main_run_any_non_ok_conclusion_fails(bad):
+    out, _ = main_run_of(
+        [
+            run("CI", "s1", "success", "2026-11-20T10:01:00Z", n=2),
+            run("Deploy", "s1", bad, "2026-11-20T10:00:00Z", n=7),
+        ]
+    )
+    assert out["conclusion"] == "failure" and out["workflow"] == "Deploy"
+
+
+@pytest.mark.parametrize("ok", ["success", "skipped", "neutral"])
+@responses.activate
+def test_main_run_ok_conclusions_succeed(ok):
+    out, _ = main_run_of([run("CI", "s1", ok, "2026-11-20T10:00:00Z")])
+    assert out["conclusion"] == "success"
 
 
 @responses.activate

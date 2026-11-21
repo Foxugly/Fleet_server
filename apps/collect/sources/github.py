@@ -8,6 +8,8 @@ API = "https://api.github.com"
 PER_PAGE = {"per_page": 100}
 BAD_CONCLUSIONS = {"failure", "cancelled", "timed_out", "action_required"}
 BAD_STATES = {"failure", "error"}
+#: Main-branch run conclusions that are not a failure; anything else is.
+OK_CONCLUSIONS = {"success", "skipped", "neutral"}
 PENDING_STATUSES = {"queued", "in_progress", "pending", "waiting", "requested"}
 
 
@@ -77,20 +79,37 @@ def _prs(session, base: str) -> list[dict]:
 
 
 def _main_run(session, base: str) -> dict | None:
+    """Verdict of the newest commit pushed to main, across all its workflows.
+
+    Only `push` runs count: a fork's pull_request from a branch named `main`, or
+    Dependabot's own "dynamic" runs, say nothing about main. Every non-CodeQL run
+    of that commit is evaluated; any conclusion outside OK_CONCLUSIONS (failure,
+    cancelled, startup_failure, timed_out...) fails it, deny by default.
+    """
     body = get_json(
         session,
         f"{base}/actions/runs",
-        params={"branch": "main", "status": "completed", **PER_PAGE},
+        params={"branch": "main", "event": "push", "status": "completed", **PER_PAGE},
     )
-    for run in body.get("workflow_runs", []):
-        if run.get("name") != "CodeQL":
-            return {
-                "workflow": run["name"],
-                "conclusion": run.get("conclusion"),
-                "url": run["html_url"],
-                "created_at": run["created_at"],
-            }
-    return None
+    runs = [
+        r
+        for r in body.get("workflow_runs", [])
+        if r.get("name") != "CodeQL" and r.get("event") == "push" and r.get("head_sha")
+    ]
+    if not runs:
+        return None
+    newest = max(runs, key=lambda r: r["created_at"])
+    sha = newest["head_sha"]
+    of_sha = [r for r in runs if r["head_sha"] == sha]
+    failing = [r for r in of_sha if r.get("conclusion") not in OK_CONCLUSIONS]
+    shown = failing[0] if failing else newest
+    return {
+        "sha": sha,
+        "conclusion": "failure" if failing else "success",
+        "url": shown["html_url"],
+        "workflow": shown["name"],
+        "created_at": shown["created_at"],
+    }
 
 
 def collect_repo(repo: str, *, token: str) -> dict:
