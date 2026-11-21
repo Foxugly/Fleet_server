@@ -33,12 +33,13 @@ def collect_project(
     now = now or datetime.now(UTC)
     url = f"{api.rstrip('/')}/projects/{org}/{project}/issues/"
     try:
-        raw = get_json_paginated(
-            _session(token),
-            url,
-            params={"query": "is:unresolved", "statsPeriod": "24h"},
-            max_items=MAX_ISSUES,
-        )
+        with _session(token) as session:
+            raw = get_json_paginated(
+                session,
+                url,
+                params={"query": "is:unresolved", "statsPeriod": "24h"},
+                max_items=MAX_ISSUES,
+            )
     except SourceError as exc:
         if exc.status == 404:
             raise SourceError(f"sentry project {project} not found") from exc

@@ -127,3 +127,24 @@ def test_collect_box_command_failure(monkeypatch, tmp_path):
     with pytest.raises(SourceError, match="apt exited 100") as ei:
         box.collect_box()
     assert len(str(ei.value)) < 260
+
+
+def test_child_env_is_minimal(monkeypatch, tmp_path):
+    monkeypatch.setenv("FLEET_GITHUB_READ_TOKEN", "ghp_secret")
+    monkeypatch.setenv("DB_PASSWORD", "dbsecret")
+    calls = []
+    _patch(monkeypatch, tmp_path, _ok(), calls)
+    box.collect_box()
+    for _cmd, kw in calls:
+        assert set(kw["env"]) == {"PATH", "LC_ALL"}
+
+
+def test_stderr_is_logged_not_stored(monkeypatch, tmp_path, caplog):
+    outputs = _ok()
+    outputs["apt"] = (100, "", "E: secret-detail")
+    _patch(monkeypatch, tmp_path, outputs, [])
+    with caplog.at_level("WARNING", logger="apps.collect.sources.box"):
+        with pytest.raises(SourceError) as ei:
+            box.collect_box()
+    assert str(ei.value) == "apt exited 100"
+    assert "secret-detail" in caplog.text

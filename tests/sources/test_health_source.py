@@ -1,7 +1,9 @@
 import ssl
 from datetime import UTC, datetime, timedelta
 
+import pytest
 import requests
+from celery.exceptions import SoftTimeLimitExceeded
 
 from apps.collect.sources import health
 
@@ -14,6 +16,10 @@ def _not_after(dt: datetime) -> str:
 
 class FakeResp:
     status_code = 200
+    closed = False
+
+    def close(self):
+        self.closed = True
 
 
 def _patch(monkeypatch, *, get=None, cert=None):
@@ -43,7 +49,7 @@ def test_probe_ok(monkeypatch):
 
 
 def test_probe_redirect_reported(monkeypatch):
-    class R:
+    class R(FakeResp):
         status_code = 301
 
     _patch(monkeypatch, get=lambda *a, **k: R())
@@ -93,3 +99,38 @@ def test_both_fail_errors_combined(monkeypatch):
     out = health.probe("a.example.com", "/", now=NOW)
     assert "ConnectionError: refused" in out["error"]
     assert "TLS OSError: no route" in out["error"]
+
+
+def test_probe_streams_and_closes_without_reading_body(monkeypatch):
+    seen = {}
+
+    class Streamed(FakeResp):
+        @property
+        def content(self):
+            raise AssertionError("body must not be read")
+
+    def fake_get(url, **kw):
+        seen["kw"] = kw
+        seen["resp"] = Streamed()
+        return seen["resp"]
+
+    _patch(monkeypatch, get=fake_get)
+    assert health.probe("a.example.com", "/", now=NOW)["status"] == 200
+    assert seen["kw"]["stream"] is True
+    assert seen["resp"].closed is True
+
+
+def _soft_limit(*a, **k):
+    raise SoftTimeLimitExceeded()
+
+
+def test_soft_time_limit_on_http_propagates(monkeypatch):
+    _patch(monkeypatch, get=_soft_limit)
+    with pytest.raises(SoftTimeLimitExceeded):
+        health.probe("a.example.com", "/", now=NOW)
+
+
+def test_soft_time_limit_on_tls_propagates(monkeypatch):
+    _patch(monkeypatch, cert=_soft_limit)
+    with pytest.raises(SoftTimeLimitExceeded):
+        health.probe("a.example.com", "/", now=NOW)

@@ -100,3 +100,20 @@ def test_auth_error_raises(status):
     with pytest.raises(SourceError, match="authentication") as exc:
         sentry.collect_project("proj", token="secret-tok", org="org", api=API)
     assert "secret-tok" not in str(exc.value)
+
+
+@responses.activate
+def test_session_is_closed(monkeypatch):
+    closed = []
+    real = sentry._session
+
+    def tracking(token):
+        session = real(token)
+        orig = session.close
+        session.close = lambda: (closed.append(True), orig())
+        return session
+
+    monkeypatch.setattr(sentry, "_session", tracking)
+    responses.get(URL, json=[_issue(0)])
+    sentry.collect_project("proj", token="t", org="org", api=API, now=NOW)
+    assert closed == [True]

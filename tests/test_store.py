@@ -45,3 +45,14 @@ def test_purge_keeps_latest_ok():
     fresh = record("box", "other", data={"v": 3})
     assert purge_older_than(30) == 3
     assert set(Snapshot.objects.values_list("id", flat=True)) == {keep.id, fresh.id}
+
+
+def test_record_empty_dict_is_a_success():
+    snap = record("box", "box", data={})
+    assert snap.ok is True and snap.data == {}
+    assert latest_ok("box", "box") == snap
+
+
+def test_record_empty_dict_with_error_is_rejected():
+    with pytest.raises(ValueError):
+        record("box", "box", data={}, error="boom")

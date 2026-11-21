@@ -1,5 +1,6 @@
 """Box collector: reads the host's own state as an unprivileged user (Linux only)."""
 
+import logging
 import os
 import subprocess
 import sys
@@ -11,6 +12,8 @@ REBOOT_REQUIRED = Path("/var/run/reboot-required")
 REBOOT_PKGS = Path("/var/run/reboot-required.pkgs")
 MEMINFO = Path("/proc/meminfo")
 TIMEOUT = 60
+
+log = logging.getLogger(__name__)
 
 
 def parse_apt_upgradable(text: str) -> list[dict]:
@@ -70,14 +73,17 @@ def _run(cmd: list[str]) -> str:
             check=False,
             capture_output=True,
             text=True,
-            env={**os.environ, "LC_ALL": "C"},
+            # Minimal env: no token or DB password is inherited by the child.
+            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C"},
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise SourceError(f"{cmd[0]} failed: {type(exc).__name__}") from exc
     if proc.returncode != 0:
-        raise SourceError(
-            f"{cmd[0]} exited {proc.returncode}: {(proc.stderr or '')[:200]}"
+        # stderr goes to the log, never into the stored (API-visible) error.
+        log.warning(
+            "%s exited %s: %s", cmd[0], proc.returncode, (proc.stderr or "")[:500]
         )
+        raise SourceError(f"{cmd[0]} exited {proc.returncode}")
     return proc.stdout
 
 

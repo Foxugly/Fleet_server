@@ -11,15 +11,16 @@ def record(
     source: str, subject: str, *, data: dict | None = None, error: str = ""
 ) -> Snapshot:
     """Store a success (data) or a failure (error); exactly one must be given."""
-    if not data and not error:
+    # `data={}` is a valid (empty) success: test for None, not falsiness.
+    if data is None and not error:
         raise ValueError("record() needs data or error")
-    if data and error:
+    if data is not None and error:
         raise ValueError("record() takes data or error, not both")
     return Snapshot.objects.create(
         source=source,
         subject=subject,
         ok=not error,
-        data=data or {},
+        data=data if data is not None else {},
         error=error,
     )
 

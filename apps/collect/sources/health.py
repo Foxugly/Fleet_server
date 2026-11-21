@@ -10,6 +10,7 @@ import time
 from datetime import UTC, datetime
 
 import requests
+from celery.exceptions import SoftTimeLimitExceeded
 
 TIMEOUT = 10
 MAX_MSG = 200
@@ -40,16 +41,28 @@ def probe(vhost: str, path: str, *, now: datetime | None = None) -> dict:
 
     start = time.monotonic()
     try:
+        # stream=True: only the status line and headers are read; the body is
+        # never downloaded, and the connection is released at once.
         resp = requests.get(
-            f"https://{vhost}{path}", timeout=TIMEOUT, allow_redirects=False
+            f"https://{vhost}{path}",
+            timeout=TIMEOUT,
+            allow_redirects=False,
+            stream=True,
         )
-        latency_ms = int((time.monotonic() - start) * 1000)
-        status = resp.status_code
+        try:
+            latency_ms = int((time.monotonic() - start) * 1000)
+            status = resp.status_code
+        finally:
+            resp.close()
+    except SoftTimeLimitExceeded:
+        raise  # the task's time budget is spent: let Celery stop it
     except Exception as exc:
         errors.append(_describe(exc))
 
     try:
         tls_days_left = _tls_days_left(vhost, now)
+    except SoftTimeLimitExceeded:
+        raise
     except Exception as exc:
         errors.append(f"TLS {_describe(exc)}")
 
