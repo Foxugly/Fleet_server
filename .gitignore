@@ -1,1 +1,22 @@
 .superpowers/
+
+# Python / Django
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+db.sqlite3
+staticfiles/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Secrets / local env
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+.vscode/

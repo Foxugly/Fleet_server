@@ -1,0 +1,66 @@
+name: Dependabot auto-merge
+
+# Turns on GitHub auto-merge (squash) for Dependabot PRs that are not a major
+# bump. GitHub then merges the PR only once every required status check of the
+# branch protection on main is green — this workflow never merges a red PR.
+# Majors (routine ones are ignored in dependabot.yml; security ones can be
+# major) stay open for a human.
+#
+# The merge must be made with DEPENDABOT_AUTOMERGE_TOKEN (a fine-grained PAT,
+# stored as a *Dependabot* secret): a merge made with GITHUB_TOKEN does not
+# trigger the push workflows, so CI/Deploy would never run on main. Without the
+# secret the job fails loudly instead of silently doing nothing.
+# Fleet doc: OPERATIONS.md §3.20.
+
+on: pull_request
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  automerge:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+      # fetch-metadata misreads Dependabot range bumps such as
+      # "update psycopg requirement from <4,>=3.3.6 to >=3.3.9,<4": it takes
+      # "4,>=3.3.6" as the old version and reports 4 -> 3.3.9 as a major, so
+      # these patch/minor PRs never got auto-merge. For a reported major, keep
+      # it major unless the >= lower bound's major and the < upper bound are
+      # both unchanged.
+      - name: Classify update
+        id: kind
+        env:
+          UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          major=false
+          if [ "$UPDATE_TYPE" = "version-update:semver-major" ]; then
+            major=true
+            from=$(printf '%s' "$TITLE" | sed -nE 's/.* requirement from (.+) to (.+)$/\1/p')
+            to=$(printf '%s' "$TITLE" | sed -nE 's/.* requirement from (.+) to (.+)$/\2/p')
+            lo() { printf '%s' "$1" | grep -oE '>=[0-9]+' | head -1; }
+            hi() { printf '%s' "$1" | grep -oE '<[0-9][0-9.]*' | head -1; }
+            if [ -n "$(lo "$from")" ] && [ "$(lo "$from")" = "$(lo "$to")" ] && [ "$(hi "$from")" = "$(hi "$to")" ]; then
+              major=false
+            fi
+          fi
+          echo "major=$major" >> "$GITHUB_OUTPUT"
+
+      - name: Enable auto-merge (non-major only)
+        if: steps.kind.outputs.major != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.DEPENDABOT_AUTOMERGE_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::DEPENDABOT_AUTOMERGE_TOKEN (Dependabot secret) is not set — auto-merge not enabled."
+            exit 1
+          fi
+          gh pr merge --auto --squash "$PR_URL"
