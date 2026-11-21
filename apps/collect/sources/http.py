@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 import requests
 
 TIMEOUT = 20
+MAX_PAGES = 100
 
 
 class SourceError(Exception):
@@ -63,19 +64,40 @@ def get_json(session, url, *, params=None, allow_404=False):
         raise SourceError(f"GET {_path(url)} returned invalid JSON") from exc
 
 
+def _check_next(first_url: str, next_url: str, seen: set[str]) -> None:
+    """A next link must stay on the first URL's host over HTTPS and never repeat.
+
+    The session carries a bearer token: following a link elsewhere would leak it.
+    """
+    first, nxt = urlsplit(first_url), urlsplit(next_url)
+    if nxt.scheme != "https" or nxt.netloc != first.netloc:
+        raise SourceError(f"GET {first.path}: next link leaves {first.netloc}")
+    if next_url in seen:
+        raise SourceError(f"GET {first.path}: pagination loops")
+
+
 def get_json_paginated(
     session, url, *, params=None, key=None, allow_404=False, max_items=None
 ):
     """Follow Link rel="next". With `key`, items come from body[key] (wrapped lists).
 
-    Stops on Sentry's `results="false"` next link, and once `max_items` are collected.
+    Stops on Sentry's `results="false"` next link, and once `max_items` are
+    collected. `allow_404` only covers the first page (a 404 mid-way is an
+    error); more than MAX_PAGES pages, an off-host or repeated next link raise.
     """
     items: list[dict] = []
     next_url, next_params = url, params
+    seen: set[str] = set()
+    pages = 0
     while next_url:
-        resp = get_response(session, next_url, params=next_params, allow_404=allow_404)
+        if pages >= MAX_PAGES:
+            raise SourceError(f"GET {_path(url)}: more than {MAX_PAGES} pages")
+        resp = get_response(
+            session, next_url, params=next_params, allow_404=allow_404 and pages == 0
+        )
         if resp is None:
             return []
+        pages += 1
         try:
             body = resp.json()
         except ValueError as exc:
@@ -85,5 +107,8 @@ def get_json_paginated(
             break
         nxt = resp.links.get("next", {})
         next_url = None if nxt.get("results") == "false" else nxt.get("url")
+        if next_url:
+            _check_next(url, next_url, seen)
+            seen.add(next_url)
         next_params = None  # the next URL already carries its query string
     return items
