@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 
+from django.conf import settings
 from django.db import connection
 from django.http import HttpRequest, JsonResponse
 
@@ -21,4 +22,4 @@ def health(request: HttpRequest) -> JsonResponse:
     except Exception:  # noqa: BLE001 - logged, never exposed to the probe
         LOGGER.exception("health: database check failed")
         return JsonResponse({"status": "degraded"}, status=503)
-    return JsonResponse({"status": "ok"})
+    return JsonResponse({"status": "ok", "version": settings.RELEASE})

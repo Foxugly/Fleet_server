@@ -28,7 +28,7 @@ box, dependency locks), Celery beat, read API behind password + TOTP. Fleet-wide
 - Settings read env through `_env()` in `config/settings.py`; every variable is
   documented in `.env.example`; no secret is committed.
 - `STATE` (DEV|PROD) is required, no default; pytest runs on `config.settings_test` (sets
-  DEV). PROD also requires `SECRET_KEY`, `ALLOWED_HOSTS` and `REDIS_URL` (shared throttle cache).
+  DEV). PROD also requires `SECRET_KEY`, `ALLOWED_HOSTS`, `REDIS_URL` and `CORS_ALLOWED_ORIGINS` (shared throttle cache).
 - `DB_ENGINE=postgresql` selects PostgreSQL, otherwise SQLite. Redis db 12.
 - CI uses a cached PostgreSQL 16 image as steps, never a `services:` container.
 - `openapi-schema.yaml` is committed: changing an endpoint = regenerate it with

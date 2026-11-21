@@ -21,3 +21,6 @@ htmlcov/
 .idea/
 .vscode/
 .pytest_tmp/
+
+# Written by CI into the deploy bundle
+RELEASE
