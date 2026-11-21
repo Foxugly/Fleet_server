@@ -73,6 +73,15 @@ def test_gunicorn_binds_8014_on_localhost():
     assert "--workers 2" in exec_start and "--timeout 60" in exec_start
 
 
+@pytest.mark.parametrize("unit", APP_UNITS)
+def test_app_units_run_modules_not_console_scripts(unit):
+    """ssm-deploy.sh renames .venv.new to .venv: console-script shebangs go stale."""
+    lines = _directives(_read(SYSTEMD / f"{unit}.service"))
+    exec_start = next(ln for ln in lines if ln.startswith("ExecStart="))
+    python = "/srv/fleet/Fleet_server/.venv/bin/python"
+    assert exec_start.startswith(f"ExecStart={python} -m ")
+
+
 def test_celery_units():
     worker = " ".join(_directives(_read(SYSTEMD / "fleet-app-celery.service")))
     assert "celery -A config worker -l info --pool=prefork --concurrency=2" in worker
@@ -90,6 +99,7 @@ def test_env_fetch_unit_is_a_root_oneshot():
         "RuntimeDirectoryMode=0750",
         "RuntimeDirectoryPreserve=yes",
         "ProtectSystem=strict",
+        "ProtectProc=invisible",
         "ExecStart=/usr/local/sbin/fleet-app-env-fetch.sh",
     ):
         assert directive in lines, directive
@@ -156,10 +166,10 @@ def test_ssm_deploy_script():
     assert "collectstatic" not in code
     # literal .env parsing, never sourced
     assert not re.search(r"^\s*(source|\.)\s+\S*\.env", code, re.M)
-    assert "read -r key value" in text
+    assert 'load_env "$ENV_FILE"' in text
     assert '[ "$NEW" = "$APP/.bundle-new" ]' in text
     # migrate and check run BEFORE the swap (Review Focus 2: old code keeps serving).
-    assert text.index("manage.py migrate") < text.index("# --- 3. Swap")
+    assert text.index("manage.py migrate") < text.index("# --- 4. Swap")
 
 
 VHOST = DEPLOY / "nginx" / "fleet-api.foxugly.com"

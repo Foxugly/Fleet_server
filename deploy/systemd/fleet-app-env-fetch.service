@@ -26,6 +26,9 @@ Environment=AWS_CONFIG_FILE=/dev/null
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
+# Defence in depth: the decrypted SSM payload goes through a pipe, never argv,
+# and other users' processes are hidden from this unit's /proc anyway.
+ProtectProc=invisible
 NoNewPrivileges=yes
 RestrictSUIDSGID=yes
 ExecStart=/usr/local/sbin/fleet-app-env-fetch.sh

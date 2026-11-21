@@ -19,7 +19,7 @@ Environment="PYTHONUNBUFFERED=1"
 # schedule is worse than none). Same model as billing-celery-beat.
 RuntimeDirectory=fleet-app-beat
 RuntimeDirectoryMode=0750
-ExecStart=/srv/fleet/Fleet_server/.venv/bin/celery -A config beat -l info \
+ExecStart=/srv/fleet/Fleet_server/.venv/bin/python -m celery -A config beat -l info \
     --schedule /run/fleet-app-beat/schedule
 # Hardening (OPERATIONS.md §3.22). Never ProtectSystem=strict on an app unit.
 NoNewPrivileges=yes

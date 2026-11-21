@@ -17,7 +17,9 @@ Environment="PYTHONUNBUFFERED=1"
 # Persistent connections: gunicorn only (OPERATIONS.md §3.22); Celery and one-off
 # commands keep the settings default 0.
 Environment="DB_CONN_MAX_AGE=60"
-ExecStart=/srv/fleet/Fleet_server/.venv/bin/gunicorn --no-control-socket --workers 2 --timeout 60 \
+# `python -m gunicorn`, not .venv/bin/gunicorn: each deploy builds .venv.new and
+# renames it to .venv, and console-script shebangs keep the old path.
+ExecStart=/srv/fleet/Fleet_server/.venv/bin/python -m gunicorn --no-control-socket --workers 2 --timeout 60 \
     --bind 127.0.0.1:8014 \
     config.wsgi:application
 # Hardening (OPERATIONS.md §3.22). Never ProtectSystem=strict on an app unit.

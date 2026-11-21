@@ -38,30 +38,43 @@ TMP_FILE="$OUT_FILE.tmp"
 : > "$TMP_FILE"
 chmod 640 "$TMP_FILE"
 
-OUT=$(aws ssm get-parameters-by-path \
+# The decrypted payload goes from aws to python through a PIPE: never in a shell
+# variable, never in argv (/proc/<pid>/cmdline is world-readable). pipefail makes
+# an aws failure fail the pipeline.
+# Python refuses, before writing anything (the current .env is then kept):
+#   - a key that is not an environment name (^[A-Z][A-Z0-9_]*$), or one that
+#     steers the shell, the loader or Python (PATH, LD_*, PYTHON*, BASH_ENV, ENV,
+#     IFS, HOME, SHELL);
+#   - a value holding a line break, a quote or a backslash: systemd's
+#     EnvironmentFile would unquote or unescape it, the literal loader of
+#     ssm-deploy.sh would not, and the two must read the same value.
+if ! aws ssm get-parameters-by-path \
   --region "$REGION" \
   --path "$PREFIX" \
   --recursive \
   --with-decryption \
-  --output json)
-
-if ! python3 -c '
-import json, sys
-prefix, out_path, payload = sys.argv[1:4]
-data = json.loads(payload)
-n = 0
-with open(out_path, "a", encoding="utf-8") as f:
-    for p in data.get("Parameters", []):
-        name = p["Name"]
-        key = name[len(prefix) + 1:] if name.startswith(prefix + "/") else name.rsplit("/", 1)[-1]
-        value = p["Value"]
-        if "\n" in value or "\r" in value:
-            print(f"ERROR: the value of {key} contains a line break", file=sys.stderr)
-            sys.exit(2)
-        f.write(f"{key}={value}\n")
-        n += 1
-print(f"[fetch-env] {n} entries written to the temporary file", file=sys.stderr)
-' "$PREFIX" "$TMP_FILE" "$OUT"; then
+  --output json | python3 -c '
+import json, re, sys
+prefix, out_path = sys.argv[1:3]
+data = json.load(sys.stdin)
+key_re = re.compile(r"[A-Z][A-Z0-9_]*\Z")
+denied = {"PATH", "BASH_ENV", "ENV", "IFS", "HOME", "SHELL"}
+bad_chars = ("\n", "\r", chr(34), chr(39), chr(92))
+lines = []
+for p in data.get("Parameters", []):
+    name = p["Name"]
+    key = name[len(prefix) + 1:] if name.startswith(prefix + "/") else name.rsplit("/", 1)[-1]
+    value = p["Value"]
+    if not key_re.match(key) or key in denied or key.startswith(("LD_", "PYTHON")):
+        sys.exit(f"ERROR: refused key {key!r} under {prefix}")
+    if any(c in value for c in bad_chars):
+        sys.exit(f"ERROR: the value of {key} holds a line break, a quote or a backslash")
+    lines.append(f"{key}={value}\n")
+with open(out_path, "a", encoding="utf-8", newline="\n") as f:
+    f.writelines(lines)
+print(f"[fetch-env] {len(lines)} entries written to the temporary file", file=sys.stderr)
+' "$PREFIX" "$TMP_FILE"; then
+  echo "ERROR: fetch or validation failed; the current .env is kept" >&2
   rm -f "$TMP_FILE"
   exit 2
 fi

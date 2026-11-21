@@ -7,7 +7,7 @@ so no `django` site can read it or replace it (plan 3, D1).
 
 | What | Where on the box | Source in this repo |
 |---|---|---|
-| App tree (bundle, `.venv`) | `/srv/fleet/Fleet_server` | CI bundle: `git archive` + `RELEASE` |
+| App tree (bundle, `.venv`, `.venv.prev`) | `/srv/fleet/Fleet_server` | CI bundle: `git archive` + `RELEASE` |
 | Units | `/etc/systemd/system/fleet-app-{env-fetch,gunicorn,celery,celery-beat}.service` | `deploy/systemd/` |
 | Config script (root) | `/usr/local/sbin/fleet-app-env-fetch.sh` | `deploy/fetch-env-from-ssm.sh` |
 | Privileged deploy step (root) | `/usr/local/sbin/fleet-app-deploy-privileged.sh` | `deploy/fleet-deploy-privileged.sh` |
@@ -34,9 +34,13 @@ A push to `main` runs CI, then `.github/workflows/deploy.yml` (OIDC role `fleet-
 3. Root downloads the bundle into a `mktemp -d`; `fleet` extracts it into
    `/srv/fleet/Fleet_server/.bundle-new`.
 4. Root copies `ssm-deploy.sh` from the mirror into a root-owned temp file and runs
-   `sudo -u fleet bash <tmp> /srv/fleet/Fleet_server/.bundle-new`: locked dependencies into
-   `.venv`, `migrate`, `check --deploy`, then the swap. A failure stops before the swap: the
-   old code keeps serving and the workflow goes red.
+   `sudo -u fleet bash <tmp> /srv/fleet/Fleet_server/.bundle-new <sha>`: a fresh `.venv.new`
+   (`python3.12 -m venv`, hashed lock, `pip check`), then with that venv and the new code
+   `check --deploy` and only then `migrate`, then the swap of code and venv together
+   (`.venv` → `.venv.prev`, `.venv.new` → `.venv`). A failure stops before the swap: the
+   old code and the old `.venv` keep serving, `.venv.new` is removed, the workflow goes red.
+   Units run `.venv/bin/python -m gunicorn` / `-m celery`: a renamed venv keeps stale
+   console-script shebangs, so nothing calls `.venv/bin/<script>`.
 5. Root restarts `fleet-app-gunicorn fleet-app-celery fleet-app-celery-beat`, checks
    `/health/` locally, then CI checks `https://fleet-api.foxugly.com/health/` returns the SHA.
 
@@ -188,6 +192,9 @@ sudo systemctl restart fleet-app-gunicorn fleet-app-celery fleet-app-celery-beat
 ```
 
 A deploy does not re-read SSM (`enable --now` starts the oneshot only once).
+`fleet-app-env-fetch` refuses (and keeps the current `.env`) a parameter whose name is not
+`^[A-Z][A-Z0-9_]*$` or is `PATH`, `LD_*`, `PYTHON*`, `BASH_ENV`, `ENV`, `IFS`, `HOME`, `SHELL`,
+and a value holding a line break, a quote or a backslash.
 `SECRET_KEY` rotation signs every operator out. **Never rotate `FLEET_MFA_ENCRYPTION_KEY`**
 without running `reset_mfa` for every user afterwards: the enrolled TOTP secrets become
 unreadable.
