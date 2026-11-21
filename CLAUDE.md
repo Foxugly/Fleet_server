@@ -31,6 +31,8 @@ box, dependency locks), Celery beat, read API behind password + TOTP. Fleet-wide
   DEV). PROD also requires `SECRET_KEY`, `ALLOWED_HOSTS` and `REDIS_URL` (shared throttle cache).
 - `DB_ENGINE=postgresql` selects PostgreSQL, otherwise SQLite. Redis db 12.
 - CI uses a cached PostgreSQL 16 image as steps, never a `services:` container.
+- `openapi-schema.yaml` is committed: changing an endpoint = regenerate it with
+  `manage.py spectacular --file openapi-schema.yaml --validate` (test + CI check it).
 - Adding a site: edit `inventory/fleet.yaml`; the GitHub read token must cover the new repo.
 - Collectors are pure functions (token in, dict out); tokens are read-only; never read other
   sites' venvs or `/etc/letsencrypt`. Prod runs as unprivileged user `fleet` (plan 3).

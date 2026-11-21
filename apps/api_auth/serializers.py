@@ -45,3 +45,52 @@ class MfaTokenSerializer(serializers.Serializer[dict[str, Any]]):
 class MfaCodeSerializer(MfaTokenSerializer):
     #: A 6-digit TOTP code or a recovery code (`XXXXX-XXXXX`).
     code = serializers.CharField(max_length=32, trim_whitespace=True)
+
+
+class ErrorSerializer(serializers.Serializer[dict[str, Any]]):
+    code = serializers.CharField()
+    detail = serializers.CharField()
+
+
+class LoginResponseSerializer(serializers.Serializer[dict[str, Any]]):
+    """Password step: exactly one of the two flags is present (always `true`)."""
+
+    mfa_required = serializers.BooleanField(required=False)
+    mfa_setup_required = serializers.BooleanField(required=False)
+    mfa_token = serializers.CharField()
+
+
+class MfaSetupResponseSerializer(serializers.Serializer[dict[str, Any]]):
+    otpauth_uri = serializers.CharField()
+    secret = serializers.CharField()
+    qr_svg = serializers.CharField(help_text="SVG as a `data:` URI.")
+
+
+class TokenResponseSerializer(serializers.Serializer[dict[str, Any]]):
+    access = serializers.CharField()
+    refresh = serializers.CharField(
+        required=False, help_text="Omitted in cookie mode (HttpOnly cookie)."
+    )
+    user = UserSerializer()
+    recovery_codes = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="Only on MFA enrolment confirmation.",
+    )
+
+
+class TokenRefreshResponseSerializer(serializers.Serializer[dict[str, Any]]):
+    access = serializers.CharField()
+    refresh = serializers.CharField(
+        required=False, help_text="Omitted in cookie mode (HttpOnly cookie)."
+    )
+
+
+class MeResponseSerializer(serializers.Serializer[dict[str, Any]]):
+    user = UserSerializer()
+
+
+class RefreshRequestSerializer(serializers.Serializer[dict[str, Any]]):
+    refresh = serializers.CharField(
+        required=False, help_text="Body mode; cookie mode reads the cookie."
+    )

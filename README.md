@@ -18,6 +18,10 @@ serves the result to a future SPA, behind password + mandatory TOTP.
 
 Auth endpoints live under `/api/v1/auth/` (login, mfa/setup, mfa/verify, refresh, logout, me).
 
+The OpenAPI schema is committed as `openapi-schema.yaml` (the SPA generates its client from it).
+Changing an endpoint = regenerate it: `python manage.py spectacular --file openapi-schema.yaml --validate`
+(CI fails when it is stale).
+
 ## Local setup (Windows)
 
     py -3.12 -m venv .venv
@@ -87,7 +91,8 @@ Auth
   changing it requires `reset_mfa` for every user.
 - `FLEET_MFA_LOCKOUT_SECONDS` (86400): lockout after too many wrong codes.
 - `JWT_ACCESS_MINUTES` (15), `JWT_REFRESH_DAYS` (7).
-- `CORS_ALLOWED_ORIGINS` (localhost:4200): explicit origins, `*` is refused.
+- `CORS_ALLOWED_ORIGINS` (localhost:4200): explicit origins, `*` is refused; credentials and
+  the `X-Auth-Mode` header are allowed (cookie-mode SPA).
 - `AUTH_REFRESH_COOKIE_NAME` (fleet_refresh), `AUTH_REFRESH_COOKIE_SECURE` (true).
 - Throttles: `THROTTLE_ANON` (60/min), `THROTTLE_USER` (300/min), `THROTTLE_LOGIN` (10/hour),
   `THROTTLE_LOGIN_USERNAME` (20/hour), `THROTTLE_MFA` (5/min), `THROTTLE_MFA_USER` (5/min),

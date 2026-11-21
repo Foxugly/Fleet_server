@@ -1,0 +1,640 @@
+openapi: 3.0.3
+info:
+  title: Fleet API
+  version: 1.0.0
+paths:
+  /api/v1/auth/login/:
+    post:
+      operationId: auth_login
+      description: |-
+        Password step. Never returns tokens: MFA is mandatory for every user.
+
+        200 `{mfa_required, mfa_token}` when the user is enrolled, else
+        `{mfa_setup_required, mfa_token}`. The token (5 min) is then presented to
+        `mfa/verify/`, or to `mfa/setup/` + `mfa/setup/confirm/`.
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Login'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Login'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Login'
+        required: true
+      security:
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/auth/logout/:
+    post:
+      operationId: auth_logout
+      description: |-
+        Blacklist the current refresh token.
+
+        Cookie mode (no Bearer needed): blacklists the body token or else the
+        cookie, always clears the cookie, answers 204 (idempotent). Body mode
+        (Bearer required): `{refresh}`.
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      security:
+      - jwtAuth: []
+      responses:
+        '204':
+          description: No response body
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/auth/me/:
+    get:
+      operationId: auth_me
+      tags:
+      - auth
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+          description: ''
+  /api/v1/auth/mfa/setup/:
+    post:
+      operationId: auth_mfa_setup
+      description: |-
+        Enrolment, step 1: the pending secret as an `otpauth://` URI and a QR.
+
+        Calling it again returns the same pending secret. It checks no code, so
+        the default anonymous throttle is enough.
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MfaToken'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MfaToken'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/MfaToken'
+        required: true
+      security:
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MfaSetupResponse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/auth/mfa/setup/confirm/:
+    post:
+      operationId: auth_mfa_setup_confirm
+      description: |-
+        Enrolment, step 2: a first code enables MFA and completes the login.
+
+        The 10 recovery codes are in this response and nowhere else, ever.
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MfaCode'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MfaCode'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/MfaCode'
+        required: true
+      security:
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/auth/mfa/verify/:
+    post:
+      operationId: auth_mfa_verify
+      description: A TOTP code (or a one-time recovery code) completes the login.
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MfaCode'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MfaCode'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/MfaCode'
+        required: true
+      security:
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/auth/refresh/:
+    post:
+      operationId: auth_refresh
+      description: |-
+        Rotate the refresh token (the presented one is blacklisted).
+
+        Body mode: `{refresh}` in, `{access, refresh}` out. Cookie mode
+        (`X-Auth-Mode: cookie`): the HttpOnly cookie is used when the body has no
+        `refresh` (401 `refresh_cookie_missing` if there is none); the rotated token
+        replaces the cookie and is omitted from the body.
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      security:
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenRefreshResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/box/:
+    get:
+      operationId: box_retrieve
+      tags:
+      - box
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Box'
+          description: ''
+  /api/v1/overview/:
+    get:
+      operationId: overview_retrieve
+      tags:
+      - overview
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Overview'
+          description: ''
+  /api/v1/refresh/{source}/:
+    post:
+      operationId: refresh_create
+      parameters:
+      - in: path
+        name: source
+        schema:
+          type: string
+        required: true
+      tags:
+      - refresh
+      security:
+      - jwtAuth: []
+      responses:
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Queued'
+          description: ''
+  /api/v1/sites/{slug}/:
+    get:
+      operationId: site_retrieve
+      parameters:
+      - in: path
+        name: slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - sites
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SiteDetail'
+          description: ''
+components:
+  schemas:
+    Box:
+      type: object
+      properties:
+        cell:
+          $ref: '#/components/schemas/Cell'
+        data:
+          nullable: true
+        collected_at:
+          type: string
+          format: date-time
+          nullable: true
+        ok:
+          type: boolean
+          nullable: true
+        error:
+          type: string
+      required:
+      - cell
+      - collected_at
+      - data
+      - error
+      - ok
+    Cell:
+      type: object
+      properties:
+        state:
+          $ref: '#/components/schemas/StateEnum'
+        count:
+          type: integer
+        collected_at:
+          type: string
+          format: date-time
+          nullable: true
+        error:
+          type: string
+      required:
+      - collected_at
+      - count
+      - error
+      - state
+    Error:
+      type: object
+      properties:
+        code:
+          type: string
+        detail:
+          type: string
+      required:
+      - code
+      - detail
+    Login:
+      type: object
+      properties:
+        username:
+          type: string
+          maxLength: 150
+        password:
+          type: string
+          maxLength: 128
+        remember_me:
+          type: boolean
+          default: false
+      required:
+      - password
+      - username
+    LoginResponse:
+      type: object
+      description: 'Password step: exactly one of the two flags is present (always
+        `true`).'
+      properties:
+        mfa_required:
+          type: boolean
+        mfa_setup_required:
+          type: boolean
+        mfa_token:
+          type: string
+      required:
+      - mfa_token
+    MeResponse:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+      required:
+      - user
+    MfaCode:
+      type: object
+      properties:
+        mfa_token:
+          type: string
+          maxLength: 512
+        code:
+          type: string
+          maxLength: 32
+      required:
+      - code
+      - mfa_token
+    MfaSetupResponse:
+      type: object
+      properties:
+        otpauth_uri:
+          type: string
+        secret:
+          type: string
+        qr_svg:
+          type: string
+          description: SVG as a `data:` URI.
+      required:
+      - otpauth_uri
+      - qr_svg
+      - secret
+    MfaToken:
+      type: object
+      properties:
+        mfa_token:
+          type: string
+          maxLength: 512
+      required:
+      - mfa_token
+    Overview:
+      type: object
+      properties:
+        generated_at:
+          type: string
+          format: date-time
+        box:
+          $ref: '#/components/schemas/OverviewBox'
+        sites:
+          type: array
+          items:
+            $ref: '#/components/schemas/OverviewSite'
+      required:
+      - box
+      - generated_at
+      - sites
+    OverviewBox:
+      type: object
+      properties:
+        box:
+          $ref: '#/components/schemas/Cell'
+      required:
+      - box
+    OverviewSite:
+      type: object
+      properties:
+        slug:
+          type: string
+        deployed:
+          type: boolean
+        cells:
+          $ref: '#/components/schemas/SiteCells'
+      required:
+      - cells
+      - deployed
+      - slug
+    Queued:
+      type: object
+      properties:
+        queued:
+          type: string
+        already_queued:
+          type: boolean
+      required:
+      - queued
+    RefreshRequest:
+      type: object
+      properties:
+        refresh:
+          type: string
+          description: Body mode; cookie mode reads the cookie.
+    SiteCells:
+      type: object
+      properties:
+        health:
+          $ref: '#/components/schemas/Cell'
+        github:
+          $ref: '#/components/schemas/Cell'
+        sentry:
+          $ref: '#/components/schemas/Cell'
+        deps:
+          $ref: '#/components/schemas/Cell'
+      required:
+      - deps
+      - github
+      - health
+      - sentry
+    SiteDetail:
+      type: object
+      properties:
+        slug:
+          type: string
+        repos:
+          type: array
+          items:
+            type: string
+        vhosts:
+          type: array
+          items:
+            type: string
+        deployed:
+          type: boolean
+        actions_allowed:
+          type: boolean
+        sources:
+          $ref: '#/components/schemas/SiteSources'
+      required:
+      - actions_allowed
+      - deployed
+      - repos
+      - slug
+      - sources
+      - vhosts
+    SiteSources:
+      type: object
+      properties:
+        health:
+          $ref: '#/components/schemas/SourceDetail'
+        github:
+          $ref: '#/components/schemas/SourceDetail'
+        sentry:
+          $ref: '#/components/schemas/SourceDetail'
+        deps:
+          $ref: '#/components/schemas/SourceDetail'
+      required:
+      - deps
+      - github
+      - health
+      - sentry
+    SourceDetail:
+      type: object
+      properties:
+        cell:
+          $ref: '#/components/schemas/Cell'
+        items:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/Subject'
+      required:
+      - cell
+      - items
+    StateEnum:
+      enum:
+      - green
+      - orange
+      - red
+      - stale
+      - error
+      - none
+      type: string
+      description: |-
+        * `green` - green
+        * `orange` - orange
+        * `red` - red
+        * `stale` - stale
+        * `error` - error
+        * `none` - none
+    Subject:
+      type: object
+      properties:
+        data:
+          nullable: true
+        collected_at:
+          type: string
+          format: date-time
+          nullable: true
+        ok:
+          type: boolean
+          nullable: true
+        error:
+          type: string
+      required:
+      - collected_at
+      - data
+      - error
+      - ok
+    TokenRefreshResponse:
+      type: object
+      properties:
+        access:
+          type: string
+        refresh:
+          type: string
+          description: Omitted in cookie mode (HttpOnly cookie).
+      required:
+      - access
+    TokenResponse:
+      type: object
+      properties:
+        access:
+          type: string
+        refresh:
+          type: string
+          description: Omitted in cookie mode (HttpOnly cookie).
+        user:
+          $ref: '#/components/schemas/User'
+        recovery_codes:
+          type: array
+          items:
+            type: string
+          description: Only on MFA enrolment confirmation.
+      required:
+      - access
+      - user
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        username:
+          type: string
+          description: Required. 150 characters or fewer. Letters, digits and @/./+/-/_
+            only.
+          pattern: ^[\w.@+-]+$
+          maxLength: 150
+        is_staff:
+          type: boolean
+          title: Staff status
+          description: Designates whether the user can log into this admin site.
+        is_superuser:
+          type: boolean
+          title: Superuser status
+          description: Designates that this user has all permissions without explicitly
+            assigning them.
+        mfa_enabled:
+          type: boolean
+          readOnly: true
+      required:
+      - id
+      - mfa_enabled
+      - username
+  securitySchemes:
+    jwtAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
