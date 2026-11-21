@@ -1,0 +1,35 @@
+# Fleet: /run/fleet/.env from SSM (/fleet/prod/*), at every boot.
+# Installed by the deploy (fleet-deploy-privileged.sh) from root's mirror.
+# Secret rotation: systemctl restart fleet-app-env-fetch, THEN the three app units
+# (deploy/README.md).
+[Unit]
+Description=Fleet: configuration from SSM to /run/fleet/.env
+After=network-online.target
+Wants=network-online.target
+Before=fleet-app-gunicorn.service fleet-app-celery.service fleet-app-celery-beat.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+# /run/fleet: 750 root:fleet (the script sets the group). fleet can traverse it,
+# www-data cannot: that group reads every other site's .env.
+RuntimeDirectory=fleet
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+# The instance role for `aws`, never /root/.aws (OPERATIONS.md §3.19);
+# ProtectHome=yes hides it too.
+Environment=AWS_SHARED_CREDENTIALS_FILE=/dev/null
+Environment=AWS_CONFIG_FILE=/dev/null
+# Root oneshot that writes /run/fleet only: `strict` is allowed here
+# (OPERATIONS.md §3.22), never on an app unit.
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+ExecStart=/usr/local/sbin/fleet-app-env-fetch.sh
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
