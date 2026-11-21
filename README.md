@@ -64,10 +64,13 @@ Collectors and beat locally (needs Redis; Windows requires the solo pool):
 Defaults in parentheses; all are listed in `.env.example`.
 
 General
-- `STATE` (DEV): `PROD` enables Sentry reporting (with `SENTRY_DSN` set); DEBUG defaults to off only in PROD.
-- `DEBUG` (true unless PROD): Django debug; when off, HTTPS/HSTS/secure cookies apply.
-- `SECRET_KEY`: required when DEBUG is off.
-- `ALLOWED_HOSTS` (127.0.0.1,localhost,testserver), `CSRF_TRUSTED_ORIGINS`: comma lists.
+- `STATE` (DEV): `DEV` or `PROD`, anything else refuses to start. `PROD` enables Sentry reporting
+  (with `SENTRY_DSN` set) and requires `SECRET_KEY` and `ALLOWED_HOSTS`.
+- `DEBUG` (true in DEV): Django debug, only possible in DEV (ignored in PROD); when off,
+  HTTPS/HSTS/secure cookies apply.
+- `SECRET_KEY`: required in PROD; in DEV, unset means a random key per process (set it in a
+  dev `.env` to keep tokens and enrolled TOTP across restarts).
+- `ALLOWED_HOSTS` (DEV only: 127.0.0.1,localhost,testserver), `CSRF_TRUSTED_ORIGINS`: comma lists.
 - `LOG_LEVEL` (INFO).
 
 Database
@@ -87,7 +90,8 @@ Auth
   `THROTTLE_REFRESH` (6/min, manual refresh).
 
 Redis / Celery
-- `REDIS_URL` (redis://127.0.0.1:6379/12): broker and results; Redis db 12 is Fleet's.
+- `REDIS_URL` (redis://127.0.0.1:6379/12): broker and results; Redis db 12 is Fleet's. When set
+  explicitly it also backs the cache (throttle counters, prefix `fleet-cache`); unset = LocMem.
 
 Collectors
 - `FLEET_GITHUB_READ_TOKEN`: read-only token; must cover every repo in the inventory.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 from datetime import timedelta
 from pathlib import Path
 
@@ -24,21 +25,32 @@ def _env_list(name: str, default: str = "") -> list[str]:
     return [item.strip() for item in _env(name, default).split(",") if item.strip()]
 
 
-#: Fleet env selector (OPERATIONS.md §3.14): `PROD` or `DEV`.
-STATE = _env("STATE", "DEV").upper()
-DEBUG = _env_bool("DEBUG", STATE != "PROD")
+#: Fleet env selector (OPERATIONS.md §3.14): `PROD` or `DEV`. Anything else is
+#: a misconfiguration, never a silent fallback to DEV.
+STATE = (_env("STATE") or "DEV").upper()
+if STATE not in {"DEV", "PROD"}:
+    raise ImproperlyConfigured("STATE must be DEV or PROD")
+# DEBUG can only ever be on in DEV: DEBUG=true next to STATE=PROD is ignored.
+DEBUG = STATE == "DEV" and _env_bool("DEBUG", True)
 
 SECRET_KEY = _env("SECRET_KEY")
 if not SECRET_KEY:
-    if not DEBUG:
-        raise ImproperlyConfigured("SECRET_KEY must be set when DEBUG is off")
-    SECRET_KEY = "dev-secret-key"
+    if STATE == "PROD":
+        raise ImproperlyConfigured("SECRET_KEY must be set when STATE=PROD")
+    # DEV only: a random key per process, never a constant anyone could read
+    # in the repo and use to forge JWTs. Set SECRET_KEY in a dev `.env` to keep
+    # sessions and enrolled TOTP secrets across restarts.
+    SECRET_KEY = secrets.token_urlsafe(50)
 
-ALLOWED_HOSTS = _env_list("ALLOWED_HOSTS", "127.0.0.1,localhost,testserver")
+if STATE == "PROD":
+    ALLOWED_HOSTS = _env_list("ALLOWED_HOSTS")
+    if not ALLOWED_HOSTS:
+        raise ImproperlyConfigured("ALLOWED_HOSTS must be set when STATE=PROD")
+else:
+    ALLOWED_HOSTS = _env_list("ALLOWED_HOSTS", "127.0.0.1,localhost,testserver")
 CSRF_TRUSTED_ORIGINS = _env_list("CSRF_TRUSTED_ORIGINS")
 
 INSTALLED_APPS = [
-    "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
@@ -128,6 +140,22 @@ STATIC_ROOT = str(BASE_DIR / "staticfiles")
 
 # Redis db 12 is Fleet's (OPERATIONS.md §3.4): Celery broker and results.
 REDIS_URL = _env("REDIS_URL", "redis://127.0.0.1:6379/12")
+
+# Cache = DRF throttle counters. LocMem is per process and emptied by every
+# restart (FABRIC-3): a deploy or a second worker would reset the login/MFA
+# limits. With an explicit REDIS_URL they are shared and survive restarts; the
+# prefix keeps the keys apart from Celery's. No REDIS_URL (tests, local dev
+# without Redis): LocMem.
+if _env("REDIS_URL"):
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": REDIS_URL,
+            "KEY_PREFIX": "fleet-cache",
+        }
+    }
+else:
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
 CELERY_BROKER_URL = REDIS_URL
 CELERY_RESULT_BACKEND = REDIS_URL
 CELERY_TIMEZONE = "UTC"
