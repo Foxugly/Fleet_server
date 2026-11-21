@@ -1,0 +1,155 @@
+# Fleet inventory. Lock entries use 'Foxugly/Repo:path'.
+sites:
+  - slug: quizonline
+    repos: [Foxugly/QuizOnline]
+    vhosts: [quizonline.foxugly.com]
+    health_path: /health/
+    sentry_projects: [quizonline-backend, quizonline-frontend]
+    python_locks: ["Foxugly/QuizOnline:quizonline-server/requirements.txt"]
+    npm_locks: ["Foxugly/QuizOnline:quizonline-frontend/package-lock.json"]
+    deployed: true
+    actions_allowed: true
+  - slug: pushit
+    repos: [Foxugly/PushIT_server, Foxugly/PushIT_frontend]
+    vhosts: [pushit-api.foxugly.com, pushit.foxugly.com]
+    health_path: /health/
+    sentry_projects: [pushit-backend, pushit-frontend]
+    python_locks: ["Foxugly/PushIT_server:requirements.txt"]
+    npm_locks: ["Foxugly/PushIT_frontend:package-lock.json"]
+    deployed: true
+    actions_allowed: true
+  - slug: ical
+    repos: [Foxugly/django-ical]
+    vhosts: [ical.foxugly.com]
+    health_path: /health/
+    sentry_projects: [ical-backend-frontend]
+    python_locks: ["Foxugly/django-ical:requirements.txt"]
+    npm_locks: []
+    deployed: true
+    actions_allowed: true
+  - slug: wp
+    repos: [Foxugly/django-trainingmanager]
+    vhosts: [wp.foxugly.com]
+    health_path: /health/
+    sentry_projects: [trainingmanager-backend]
+    python_locks: ["Foxugly/django-trainingmanager:requirements.txt"]
+    npm_locks: []
+    deployed: true
+    actions_allowed: true
+  - slug: foxugly
+    repos: [Foxugly/foxugly_website]
+    vhosts: [foxugly.com]
+    health_path: /health/
+    sentry_projects: [foxugly-backend, foxugly-frontend]
+    python_locks: ["Foxugly/foxugly_website:backend/requirements.txt"]
+    npm_locks: ["Foxugly/foxugly_website:frontend/package-lock.json"]
+    deployed: true
+    actions_allowed: true
+  - slug: tm
+    repos: [Foxugly/trainingmanager_server, Foxugly/trainingmanager_frontend]
+    vhosts: [tm-api.foxugly.com, tm.foxugly.com]
+    health_path: /health/
+    sentry_projects: [tm-backend, tm-frontend]
+    python_locks: ["Foxugly/trainingmanager_server:requirements.txt"]
+    npm_locks: ["Foxugly/trainingmanager_frontend:package-lock.json"]
+    deployed: true
+    actions_allowed: true
+  - slug: poker
+    repos: [Foxugly/Poker_server, Foxugly/Poker_frontend]
+    vhosts: [poker-api.foxugly.com, poker.foxugly.com]
+    health_path: /health/
+    sentry_projects: [poker-api, poker-frontend]
+    python_locks: ["Foxugly/Poker_server:requirements.txt"]
+    npm_locks: ["Foxugly/Poker_frontend:package-lock.json"]
+    deployed: true
+    actions_allowed: true
+  - slug: billing
+    repos: [Foxugly/billing_server, Foxugly/billing_frontend]
+    vhosts: [billing-api.foxugly.com, billing.foxugly.com]
+    health_path: /health/
+    sentry_projects: [billing-backend, billing-frontend]
+    python_locks: ["Foxugly/billing_server:requirements.txt"]
+    npm_locks: ["Foxugly/billing_frontend:package-lock.json"]
+    deployed: true
+    actions_allowed: true
+  - slug: fabric
+    repos: [Foxugly/Fabric]
+    vhosts: [fabric.foxugly.com]
+    health_path: /health/
+    sentry_projects: [fabric-backend, fabric-frontend]
+    python_locks: ["Foxugly/Fabric:backend/requirements.txt"]
+    npm_locks: ["Foxugly/Fabric:frontend/package-lock.json"]
+    deployed: true
+    actions_allowed: true
+  - slug: facilitation
+    repos: [Foxugly/Facilitation_server, Foxugly/Facilitation_frontend]
+    vhosts: [facilitation-api.foxugly.com, facilitation.foxugly.com]
+    health_path: /health/
+    sentry_projects: [facilitation-backend, facilitation-frontend]
+    python_locks: ["Foxugly/Facilitation_server:requirements.txt"]
+    npm_locks: ["Foxugly/Facilitation_frontend:package-lock.json"]
+    deployed: true
+    actions_allowed: true
+  - slug: chronos
+    repos: [Foxugly/Chronos]
+    vhosts: [chronos.foxugly.com]
+    health_path: /health/
+    sentry_projects: [chronos-backend]
+    python_locks: ["Foxugly/Chronos:requirements.txt"]
+    npm_locks: []
+    deployed: true
+    actions_allowed: true
+  - slug: foxchess
+    repos: [Foxugly/foxChess]
+    vhosts: [foxchess.foxugly.com]
+    health_path: /health/
+    sentry_projects: [foxchess]
+    python_locks: ["Foxugly/foxChess:requirements.txt"]
+    npm_locks: []
+    deployed: true
+    actions_allowed: true
+  - slug: foxhouse
+    repos: [Foxugly/FoxHouse]
+    vhosts: [foxhouse.foxugly.com]
+    health_path: /health/
+    sentry_projects: [foxhouse-backend, foxhouse-frontend]
+    python_locks: ["Foxugly/FoxHouse:backend/requirements.txt"]
+    npm_locks: ["Foxugly/FoxHouse:frontend/package-lock.json"]
+    deployed: true
+    actions_allowed: true
+  - slug: pushit-app
+    repos: [Foxugly/PushIT_app]
+    vhosts: []
+    health_path: /health/
+    sentry_projects: [pushit-app]
+    python_locks: []
+    npm_locks: []
+    deployed: false
+    actions_allowed: false
+  - slug: trainingmanager-app
+    repos: [Foxugly/trainingmanager_app]
+    vhosts: []
+    health_path: /health/
+    sentry_projects: [tm-app]
+    python_locks: []
+    npm_locks: []
+    deployed: false
+    actions_allowed: false
+  - slug: foxugly-ops
+    repos: [Foxugly/foxugly-ops]
+    vhosts: []
+    health_path: /health/
+    sentry_projects: []
+    python_locks: []
+    npm_locks: []
+    deployed: false
+    actions_allowed: false
+  - slug: fleet
+    repos: [Foxugly/Fleet_server, Foxugly/Fleet_frontend]
+    vhosts: [fleet-api.foxugly.com, fleet.foxugly.com]
+    health_path: /health/
+    sentry_projects: []
+    python_locks: []
+    npm_locks: []
+    deployed: true
+    actions_allowed: false
