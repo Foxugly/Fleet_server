@@ -1,0 +1,2 @@
+[{"rule":{"id":"py/sql-injection","severity":"error","security_severity_level":"critical"},"most_recent_instance":{"location":{"path":"app/db.py"}},"html_url":"https://github.com/Foxugly/x/security/code-scanning/1"},
+ {"rule":{"id":"py/unused","severity":"warning"},"most_recent_instance":{"location":{"path":"app/u.py"}},"html_url":"https://github.com/Foxugly/x/security/code-scanning/2"}]
