@@ -1,16 +1,22 @@
 name: CI
 
+# On a PR: this file alone (its job names `test` and `pip-audit` are the checks
+# branch protection requires). On a push to main: called by deploy.yml
+# (`uses: ./.github/workflows/ci.yml`), once; a `push` trigger here would run the
+# suite twice. A called workflow inherits the caller's github context, so the
+# PostgreSQL image cache still lives under refs/heads/main, readable by PRs.
 on:
-  push:
-    branches: [main]
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
 
+# A newer push to a PR cancels the older run; a run for main never cancels
+# another (that would fail the deploy of the older commit): one group per SHA.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:

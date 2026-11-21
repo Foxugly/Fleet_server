@@ -1,0 +1,224 @@
+name: Deploy
+
+# Fleet model (OPERATIONS.md §3.11), S3 bundle like FoxHouse. On a push to main:
+# CI (ci.yml, called here) THEN, if it passes, the deploy: `git archive` of the
+# repo + RELEASE -> S3 -> SSM (root) on the instance -> public /health/ check.
+#
+# No `pull_request` here: a PR or a fork never reaches the `deploy` job, the
+# `production` environment or its secrets. `workflow_dispatch` re-runs a deploy
+# of main by hand (the job guard refuses any other ref; the environment only
+# accepts protected branches).
+#
+# Secrets of the `production` environment:
+#   AWS_DEPLOY_ROLE_ARN  role fleet-deploy (OIDC): s3:PutObject on
+#                        foxugly-deploy/builds/fleet-server/*, ssm:SendCommand,
+#                        ssm:GetCommandInvocation (deploy/iam-cloudshell.sh)
+#   EC2_INSTANCE_ID      i-0fe664678563bae5f
+#
+# Shell steps read GitHub values from env (GITHUB_SHA, secrets via `env:`),
+# never `${{ }}` inside a `run:`; tests/test_workflows.py runs them as they are.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Nothing by default: each job asks for what it needs.
+permissions: {}
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  deploy:
+    needs: ci
+    # Explicit guard: workflow_dispatch can target any branch.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # SSM executionTimeout is 1200 s (fresh venv each deploy) + upload + checks.
+    timeout-minutes: 30
+    # OIDC sub = repo:Foxugly@3275928/Fleet_server@1466918968:environment:production
+    # (or the legacy repo:Foxugly/Fleet_server:environment:production); the role
+    # trust pins both.
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+    # Two deploys never overlap; a push arriving mid-deploy waits (no cancel
+    # in the middle of an SSM command).
+    concurrency:
+      group: deploy-fleet-server
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Two close pushes: their CIs run in parallel and the slower one could
+      # deploy AFTER the newer one, putting the old commit back. A run whose SHA
+      # is no longer the head of main stops here, green; the newest run deploys.
+      - name: Still the head of main?
+        id: head
+        run: |
+          head=$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/main | cut -f1)
+          if [ "$head" = "$GITHUB_SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::main has moved to $head: this run ($GITHUB_SHA) does not deploy."
+            echo "current=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The bundle is the repo at the pushed SHA, root level (no prefix, no .git),
+      # plus RELEASE = full SHA (read by settings, served by /health/).
+      # deploy/ssm-deploy.sh refuses a bundle without manage.py, requirements.txt
+      # or a non-empty RELEASE.
+      - name: Build the bundle
+        id: bundle
+        if: steps.head.outputs.current == 'true'
+        run: |
+          set -euo pipefail
+          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]; then
+            echo "::error::checkout is $(git rev-parse HEAD), expected $GITHUB_SHA"; exit 1
+          fi
+          tarball="$RUNNER_TEMP/fleet-server-$GITHUB_SHA.tar"
+          git archive --format=tar -o "$tarball" HEAD
+          printf '%s\n' "$GITHUB_SHA" > "$RUNNER_TEMP/RELEASE"
+          tar --append -f "$tarball" -C "$RUNNER_TEMP" --owner=0 --group=0 --mode=0644 RELEASE
+          gzip -n -f "$tarball"
+          echo "BUNDLE=$tarball.gz" >> "$GITHUB_ENV"
+          ls -l "$tarball.gz"
+
+      - name: AWS credentials (OIDC)
+        if: steps.head.outputs.current == 'true'
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: eu-west-1
+          role-session-name: gh-actions-fleet-server-${{ github.run_id }}
+
+      - name: Upload the bundle to S3
+        id: upload
+        if: steps.head.outputs.current == 'true'
+        run: >-
+          aws s3 cp --only-show-errors "$BUNDLE"
+          "s3://foxugly-deploy/builds/fleet-server/$GITHUB_SHA.tar.gz"
+
+      - name: Deploy on the instance over SSM
+        id: ssm
+        if: steps.head.outputs.current == 'true'
+        env:
+          INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+        run: |
+          set -euo pipefail
+          # The SHA is the only value from GitHub spliced into the box script.
+          if ! [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::unexpected GITHUB_SHA '$GITHUB_SHA'"; exit 1
+          fi
+          # Commands run by ROOT under /bin/sh (dash), in order. SSM joins them
+          # into ONE script and keeps only the last exit code: `set -eu` first.
+          # No `a && b` (set -e ignores a failure of `a`) and no pipes (no
+          # pipefail in dash): one command per step.
+          #   1. root's BARE MIRROR (/var/lib/fleet-deploy, root:root 700) fetched
+          #      from GitHub (public repo, anonymous HTTPS) at the pushed SHA;
+          #   2. the privileged script, read from the mirror, installed in
+          #      /usr/local/sbin and run: env-fetch script, units, vhost, dirs;
+          #   3. root downloads the bundle into a private mktemp -d;
+          #   4. FLEET extracts it (from stdin) into its own tree, .bundle-new;
+          #      root never writes into a fleet-owned directory;
+          #   5. as fleet: ssm-deploy.sh, read from root's mirror into a root-owned
+          #      0644 file (never from the bundle or the app tree): fresh venv,
+          #      check --deploy, migrate, swap;
+          #   6. as root: restart the three units, local /health/ loop;
+          #   7. permissions: chown -R -h (follows no link) as root, chmod as fleet.
+          # Single-quoted entries reach the box verbatim ($M, $T... expand there).
+          cmds=(
+            'set -eu'
+            'export HOME=/root AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_CONFIG_FILE=/dev/null'
+            'cd /'
+            "SHA=$GITHUB_SHA"
+            'M=/var/lib/fleet-deploy/Fleet_server.git'
+            'A=/srv/fleet/Fleet_server'
+            'T=$(mktemp -d)'
+            'S=$(mktemp)'
+            "trap 'rm -rf \"\$T\" \"\$S\"' EXIT"
+            'install -d -m 700 -o root -g root /var/lib/fleet-deploy'
+            '[ -d "$M" ] || git init --quiet --bare "$M"'
+            'git --git-dir="$M" fetch --quiet --depth=1 https://github.com/Foxugly/Fleet_server.git "$SHA"'
+            'git --git-dir="$M" cat-file -e "$SHA^{commit}"'
+            'git --git-dir="$M" show "$SHA:deploy/fleet-deploy-privileged.sh" > "$T/privileged.sh"'
+            'install -m 0755 -o root -g root "$T/privileged.sh" /usr/local/sbin/fleet-app-deploy-privileged.sh'
+            '/usr/local/sbin/fleet-app-deploy-privileged.sh "$M" "$SHA"'
+            'aws s3 cp --only-show-errors "s3://foxugly-deploy/builds/fleet-server/$SHA.tar.gz" "$T/bundle.tar.gz" --region eu-west-1'
+            "sudo -u fleet sh -c 'umask 027; rm -rf /srv/fleet/Fleet_server/.bundle-new && mkdir /srv/fleet/Fleet_server/.bundle-new && tar --no-same-owner --no-overwrite-dir -xzf - -C /srv/fleet/Fleet_server/.bundle-new' < \"\$T/bundle.tar.gz\""
+            'git --git-dir="$M" show "$SHA:deploy/ssm-deploy.sh" > "$S"'
+            'chmod 0644 "$S"'
+            'sudo -u fleet bash "$S" /srv/fleet/Fleet_server/.bundle-new "$SHA"'
+            'systemctl restart fleet-app-gunicorn fleet-app-celery fleet-app-celery-beat'
+            'ok=0'
+            "for i in \$(seq 1 30); do if curl -fsS -o /dev/null -H 'Host: fleet-api.foxugly.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8014/health/; then ok=1; break; fi; sleep 2; done"
+            "[ \"\$ok\" = 1 ] || { echo 'ERROR: fleet-app-gunicorn not healthy on 127.0.0.1:8014 after 60 s' >&2; journalctl -u fleet-app-gunicorn -n 50 --no-pager >&2 || true; exit 1; }"
+            'chown -R -h fleet:fleet "$A"'
+            'sudo -u fleet chmod -R g-w,o-rwx "$A"'
+            'rm -rf "$T" "$S"'
+            'echo "Fleet_server $SHA deployed."'
+          )
+          params="$RUNNER_TEMP/ssm-params.json"
+          python3 -c 'import json, sys; json.dump({"commands": sys.argv[1:], "executionTimeout": ["1200"]}, sys.stdout)' \
+            "${cmds[@]}" > "$params"
+          CMD_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --comment "Deploy fleet-server ${GITHUB_SHA::7}" \
+            --parameters "file://$params" \
+            --query Command.CommandId --output text)
+          echo "SSM CommandId: $CMD_ID"
+          echo "cmd_id=$CMD_ID" >> "$GITHUB_OUTPUT"
+
+      # 260 x 5 s (+ API time) > the 1200 s executionTimeout of the command.
+      - name: Wait for the deploy to finish
+        id: wait
+        if: steps.head.outputs.current == 'true'
+        env:
+          INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+          CMD_ID: ${{ steps.ssm.outputs.cmd_id }}
+        run: |
+          for _ in $(seq 1 260); do
+            STATUS=$(aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
+              --query Status --output text 2>/dev/null || echo Pending)
+            case "$STATUS" in
+              Success)
+                aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" --query StandardOutputContent --output text
+                exit 0 ;;
+              Failed|Cancelled|TimedOut)
+                echo "Deploy: $STATUS"
+                echo "=== STDOUT ==="
+                aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" --query StandardOutputContent --output text
+                echo "=== STDERR ==="
+                aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" --query StandardErrorContent --output text
+                exit 1 ;;
+              *) sleep 5 ;;
+            esac
+          done
+          echo "::error::SSM command still running after ~22 min"; exit 1
+
+      - name: Public /health/ (200 and the deployed version)
+        id: health
+        if: steps.head.outputs.current == 'true'
+        run: |
+          for try in $(seq 1 5); do
+            code=$(curl -sS -o "$RUNNER_TEMP/health.json" -w '%{http_code}' --max-time 10 \
+              https://fleet-api.foxugly.com/health/ || echo 000)
+            echo "Try $try: HTTP $code"
+            if [ "$code" = "200" ]; then
+              cat "$RUNNER_TEMP/health.json"; echo
+              version=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("version", ""))' "$RUNNER_TEMP/health.json")
+              if [ "$version" = "$GITHUB_SHA" ]; then
+                exit 0
+              fi
+              echo "Served version: $version (expected: $GITHUB_SHA)"
+            fi
+            sleep 6
+          done
+          echo "::error::/health/ did not answer 200 with version $GITHUB_SHA"; exit 1
