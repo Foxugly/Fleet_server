@@ -133,3 +133,21 @@ def test_caps_at_300(monkeypatch, caplog):
     out = collect_lock("Foxugly/x:requirements.txt", token="t")
     assert out["checked"] == deps.MAX_PACKAGES == 300
     assert "300" in caplog.text
+
+
+def test_parse_extras():
+    lock = chr(10).join(
+        [
+            "celery[redis]==5.6.3 " + chr(92),
+            "    --hash=sha256:aa",
+            "uvicorn[standard,x] == 0.40.0",
+        ]
+    )
+    assert parse_python_lock(lock) == {"celery": "5.6.3", "uvicorn": "0.40.0"}
+
+
+@responses.activate
+def test_lock_with_no_pins_is_an_error():
+    responses.get(GH + "requirements.txt", body="# only comments" + chr(10))
+    with pytest.raises(SourceError, match="no pins parsed: Foxugly/x:requirements.txt"):
+        collect_lock("Foxugly/x:requirements.txt", token="t")

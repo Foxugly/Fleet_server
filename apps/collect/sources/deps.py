@@ -15,7 +15,10 @@ log = logging.getLogger(__name__)
 MAX_PACKAGES = 300
 PYPI = "https://pypi.org/pypi/{name}/json"
 NPM = "https://registry.npmjs.org/{name}/latest"
-_REQ = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*==\s*([^\s;\x5c]+)")
+# name, optional [extras] (dropped), == pin; markers and line continuations cut.
+_REQ = re.compile(
+    r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?\s*==\s*([^\s;\x5c]+)"
+)
 
 
 def _norm(name: str) -> str:
@@ -93,6 +96,9 @@ def collect_lock(ref: str, *, token: str) -> dict:
         pins = parse_npm_lock(resp.text) if npm else parse_python_lock(resp.text)
     except ValueError as exc:
         raise SourceError(f"lock unreadable: {ref}") from exc
+    if not pins:
+        # An empty result means the format was not understood, not "all fresh".
+        raise SourceError(f"no pins parsed: {ref}")
     items = list(pins.items())
     if len(items) > MAX_PACKAGES:
         log.warning(
