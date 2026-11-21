@@ -1,4 +1,4 @@
-"""Minimal Celery app; the schedule and queues are added with the collectors."""
+"""Celery app; tasks live in apps/collect/tasks.py, the beat schedule in settings."""
 
 import os
 

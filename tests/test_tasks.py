@@ -107,3 +107,34 @@ def test_beat_schedule_intervals(settings):
     assert got["collect_deps"] == 21600
     assert got["purge_snapshots"] == 86400
     assert tasks.INTERVALS["deps"] == 21600
+
+
+@pytest.mark.django_db
+def test_soft_time_limit_propagates(monkeypatch):
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    def fake(repo, *, token):
+        raise SoftTimeLimitExceeded()
+
+    monkeypatch.setattr(tasks.github, "collect_repo", fake)
+    with pytest.raises(SoftTimeLimitExceeded):
+        tasks.collect_github()
+    assert store.latest("github", "Foxugly/A") is None
+
+
+@pytest.mark.django_db
+def test_token_never_in_recorded_error(settings, monkeypatch):
+    settings.FLEET_GITHUB_READ_TOKEN = "s3cret-token-value"
+
+    def fake(repo, *, token):
+        if repo == "Foxugly/A":
+            raise SourceError("github unreachable")
+        raise RuntimeError("bad response")
+
+    monkeypatch.setattr(tasks.github, "collect_repo", fake)
+    tasks.collect_github()
+    from apps.collect.models import Snapshot
+
+    errors = list(Snapshot.objects.values_list("error", flat=True))
+    assert len(errors) == 2
+    assert all("s3cret-token-value" not in e for e in errors)

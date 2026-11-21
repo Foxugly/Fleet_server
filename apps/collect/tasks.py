@@ -6,6 +6,7 @@ import logging
 from collections.abc import Callable, Iterable
 
 from celery import shared_task
+from celery.exceptions import SoftTimeLimitExceeded
 from django.conf import settings
 
 from apps.inventory.loader import load_inventory
@@ -30,6 +31,8 @@ def _run(source: str, subjects: list[str], fn: Callable[[str], dict]) -> None:
             data = fn(subject)
         except SourceError as exc:
             store.record(source, subject, error=str(exc))
+        except SoftTimeLimitExceeded:
+            raise
         except Exception as exc:  # noqa: BLE001 - isolate every subject
             logger.exception("collect %s failed for %s", source, subject)
             store.record(source, subject, error=f"{type(exc).__name__}: {exc}")
