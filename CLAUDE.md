@@ -15,6 +15,7 @@ box, dependency locks), Celery beat, read API behind password + TOTP. Fleet-wide
 
 - Tests: `.venv/Scripts/python.exe -m pytest -q --basetemp=.pytest_tmp`
 - Lint: `.venv/Scripts/python.exe -m ruff check .`; migrations: `manage.py makemigrations --check --dry-run`
+  (needs `STATE=DEV` in the shell, see `.env` below)
 - Install: `pip install --require-hashes --no-deps -r requirements.txt` then `pip install -r requirements-dev.txt`
 - Lock: `uv pip compile requirements.in --generate-hashes --universal --python-version 3.12 -o requirements.txt`
   (3.14 is fine locally; CI on 3.12 is the authority)
@@ -26,6 +27,8 @@ box, dependency locks), Celery beat, read API behind password + TOTP. Fleet-wide
 
 - Settings read env through `_env()` in `config/settings.py`; every variable is
   documented in `.env.example`; no secret is committed.
+- `STATE` (DEV|PROD) is required, no default; pytest runs on `config.settings_test` (sets
+  DEV). PROD also requires `SECRET_KEY`, `ALLOWED_HOSTS` and `REDIS_URL` (shared throttle cache).
 - `DB_ENGINE=postgresql` selects PostgreSQL, otherwise SQLite. Redis db 12.
 - CI uses a cached PostgreSQL 16 image as steps, never a `services:` container.
 - Adding a site: edit `inventory/fleet.yaml`; the GitHub read token must cover the new repo.

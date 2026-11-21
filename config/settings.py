@@ -25,11 +25,12 @@ def _env_list(name: str, default: str = "") -> list[str]:
     return [item.strip() for item in _env(name, default).split(",") if item.strip()]
 
 
-#: Fleet env selector (OPERATIONS.md §3.14): `PROD` or `DEV`. Anything else is
-#: a misconfiguration, never a silent fallback to DEV.
-STATE = (_env("STATE") or "DEV").upper()
+#: Fleet env selector (OPERATIONS.md §3.14): `PROD` or `DEV`, no default. A
+#: prod box whose env failed to load must refuse to start, not boot in DEV
+#: with DEBUG on.
+STATE = _env("STATE").upper()
 if STATE not in {"DEV", "PROD"}:
-    raise ImproperlyConfigured("STATE must be DEV or PROD")
+    raise ImproperlyConfigured("STATE must be set to DEV or PROD")
 # DEBUG can only ever be on in DEV: DEBUG=true next to STATE=PROD is ignored.
 DEBUG = STATE == "DEV" and _env_bool("DEBUG", True)
 
@@ -144,8 +145,12 @@ REDIS_URL = _env("REDIS_URL", "redis://127.0.0.1:6379/12")
 # Cache = DRF throttle counters. LocMem is per process and emptied by every
 # restart (FABRIC-3): a deploy or a second worker would reset the login/MFA
 # limits. With an explicit REDIS_URL they are shared and survive restarts; the
-# prefix keeps the keys apart from Celery's. No REDIS_URL (tests, local dev
-# without Redis): LocMem.
+# prefix keeps the keys apart from Celery's. Required in PROD; no REDIS_URL
+# (tests, local dev without Redis): LocMem.
+if not _env("REDIS_URL") and STATE == "PROD":
+    raise ImproperlyConfigured(
+        "REDIS_URL must be set when STATE=PROD (shared throttle cache)"
+    )
 if _env("REDIS_URL"):
     CACHES = {
         "default": {

@@ -14,6 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     # Tests run on the production engine (PostgreSQL 16), not SQLite (OPERATIONS.md 3.22).
     env:
+      STATE: DEV
       DB_ENGINE: postgresql
       DB_NAME: fleet
       DB_HOST: localhost
