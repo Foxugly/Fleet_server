@@ -262,3 +262,26 @@ def test_refresh_dedupes_per_source(client: APIClient, monkeypatch: Any) -> None
     assert second.json() == {"queued": "github", "already_queued": True}
     assert other.json() == {"queued": "sentry"}
     assert called == ["g", "s"]
+
+
+@pytest.mark.django_db
+def test_refresh_failed_delay_releases_dedupe_key(
+    client: APIClient, monkeypatch: Any
+) -> None:
+    from django.core.cache import cache
+
+    calls: list[int] = []
+
+    def broker_down() -> None:
+        calls.append(1)
+        raise ConnectionError("broker down")
+
+    monkeypatch.setattr(tasks.collect_deps, "delay", broker_down)
+    client.raise_request_exception = False
+    first = client.post("/api/v1/refresh/deps/")
+    assert first.status_code == 500
+    assert cache.get("refresh:deps") is None
+    monkeypatch.setattr(tasks.collect_deps, "delay", lambda: calls.append(2))
+    second = client.post("/api/v1/refresh/deps/")
+    assert second.json() == {"queued": "deps"}
+    assert calls == [1, 2]

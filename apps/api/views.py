@@ -130,10 +130,16 @@ class RefreshView(APIView):
             raise Http404
         # One queued run per source per minute: a double click (or a script)
         # must not fan the same collection out to the external APIs twice.
-        if not cache.add(f"refresh:{source}", 1, timeout=REFRESH_DEDUPE_SECONDS):
+        key = f"refresh:{source}"
+        if not cache.add(key, 1, timeout=REFRESH_DEDUPE_SECONDS):
             return Response(
                 {"queued": source, "already_queued": True},
                 status=http.HTTP_202_ACCEPTED,
             )
-        getattr(tasks, task_name).delay()
+        try:
+            getattr(tasks, task_name).delay()
+        except Exception:
+            # Nothing was queued (broker down): do not claim "already queued".
+            cache.delete(key)
+            raise
         return Response({"queued": source}, status=http.HTTP_202_ACCEPTED)
