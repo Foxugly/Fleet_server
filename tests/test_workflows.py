@@ -191,11 +191,39 @@ def _runner(tmp_path: Path) -> tuple[Path, Path]:
     return runner_temp, stubs
 
 
+def _github_shell(step: dict, job: dict, wf: dict) -> list[str]:
+    """bash flags GitHub uses for a `run:` step on ubuntu, from the nearest
+    `shell:` (step, then job defaults, then workflow defaults)."""
+    shell = (
+        step.get("shell")
+        or job.get("defaults", {}).get("run", {}).get("shell")
+        or wf.get("defaults", {}).get("run", {}).get("shell")
+    )
+    if shell is None:
+        return ["-e"]  # GitHub's `bash -e {0}`: no pipefail
+    if shell == "bash":
+        return ["--noprofile", "--norc", "-eo", "pipefail"]
+    raise AssertionError(f"unexpected shell {shell!r}")
+
+
 def _run_step(
-    step_id: str, tmp_path: Path, stubs: Path, env: dict, cwd: Path | None = None
+    step_id: str,
+    tmp_path: Path,
+    stubs: Path,
+    env: dict,
+    cwd: Path | None = None,
+    *,
+    run: str | None = None,
+    flags: list[str] | None = None,
 ):
+    """Run a deploy step's script with the bash flags GitHub would use."""
+    wf = _load(DEPLOY)
+    job = wf["jobs"]["deploy"]
+    step = _step(step_id)
+    if flags is None:
+        flags = _github_shell(step, job, wf)
     script = tmp_path / f"{step_id}.sh"
-    script.write_text(_step(step_id)["run"], encoding="utf-8", newline="\n")
+    script.write_text(run or step["run"], encoding="utf-8", newline="\n")
     out = tmp_path / "github_output"
     genv = tmp_path / "github_env"
     out.touch()
@@ -215,9 +243,10 @@ def _run_step(
             "--noprofile",
             "--norc",
             "-c",
-            'PATH="$1:$PATH"; shift; exec bash --noprofile --norc -eo pipefail "$@"',
+            'PATH="$1:$PATH"; shift; exec bash "$@"',
             "_",
             _posix(stubs),
+            *flags,
             _posix(script),
         ],
         capture_output=True,
@@ -252,13 +281,58 @@ def test_head_guard_deploys_only_the_head_of_main(tmp_path, head, current):
     assert outputs["current"] == current
 
 
+def test_deploy_steps_run_under_bash_with_pipefail():
+    # Without `shell: bash`, GitHub runs `bash -e {0}`: no pipefail, so a
+    # failing `git ls-remote | cut` would look like success.
+    assert _load(DEPLOY)["defaults"] == {"run": {"shell": "bash"}}
+    wf = _load(DEPLOY)
+    job = wf["jobs"]["deploy"]
+    for step in job["steps"]:
+        if "run" in step:
+            assert "pipefail" in _github_shell(step, job, wf), step.get("name")
+
+
+# The guard as first written (review fix round 1): no explicit empty-head check.
+OLD_HEAD_GUARD = """\
+head=$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/main \
+  | cut -f1)
+if [ "$head" = "$GITHUB_SHA" ]; then
+  echo "current=true" >> "$GITHUB_OUTPUT"
+else
+  echo "current=false" >> "$GITHUB_OUTPUT"
+fi
+"""
+
+
+@needs_bash
+def test_old_head_guard_without_shell_bash_skipped_silently(tmp_path):
+    """The regression: GitHub unreadable, `bash -e` (no `shell:`) -> green skip."""
+    _, stubs = _runner(tmp_path)
+    _stub(stubs, "git", "exit 128")
+    res, outputs = _run_step(
+        "head", tmp_path, stubs, {}, run=OLD_HEAD_GUARD, flags=["-e"]
+    )
+    assert res.returncode == 0
+    assert outputs["current"] == "false"
+
+
 @needs_bash
 def test_head_guard_fails_when_github_cannot_be_read(tmp_path):
     _, stubs = _runner(tmp_path)
     _stub(stubs, "git", "exit 128")
     res, outputs = _run_step("head", tmp_path, stubs, {})
     assert res.returncode != 0
-    assert outputs.get("current") != "true"
+    assert "current" not in outputs
+
+
+@needs_bash
+@pytest.mark.parametrize("flags", [["-e"], None], ids=["bash-e", "github-shell"])
+def test_head_guard_fails_on_an_empty_answer_whatever_the_shell(tmp_path, flags):
+    _, stubs = _runner(tmp_path)
+    _stub(stubs, "git", "exit 0")  # ls-remote "succeeds" with no ref
+    res, outputs = _run_step("head", tmp_path, stubs, {}, flags=flags)
+    assert res.returncode != 0
+    assert "current" not in outputs
 
 
 # -- bundle ------------------------------------------------------------------
@@ -466,3 +540,89 @@ def test_public_health_requires_200_and_the_pushed_version(
     _curl_stub(stubs, status, version)
     res, _ = _run_step("health", tmp_path, stubs, {})
     assert res.returncode == code, res.stdout + res.stderr
+
+
+# -- review fix round 1: bounded calls, wait-loop errors, curl exit codes -----
+
+
+@needs_bash
+def test_send_command_has_a_delivery_timeout(tmp_path):
+    _, stubs = _runner(tmp_path)
+    log = tmp_path / "aws.log"
+    _stub(stubs, "aws", f'printf "%s\n" "$@" > "{_posix(log)}"; echo cmd-1')
+    env = {"INSTANCE_ID": "i-test", "MSYS2_ARG_CONV_EXCL": "*"}
+    res, _ = _run_step("ssm", tmp_path, stubs, env)
+    assert res.returncode == 0, res.stderr
+    args = log.read_text(encoding="utf-8").splitlines()
+    assert args[args.index("--timeout-seconds") + 1] == "120"
+
+
+@needs_bash
+def test_local_health_curl_is_bounded(tmp_path):
+    _, _, params = _ssm_params(tmp_path)
+    (loop,) = [c for c in params["commands"] if "127.0.0.1:8014/health/" in c]
+    assert "curl -fsS --max-time 5 " in loop
+
+
+def _flaky_aws(stubs: Path, tmp_path: Path, failures: int, status: str) -> Path:
+    """aws stub: the first `failures` Status queries fail (AccessDenied)."""
+    count = tmp_path / "calls"
+    _stub(
+        stubs,
+        "aws",
+        f'c="{_posix(count)}"\n'
+        'case "$*" in *"--query Status"*)\n'
+        '  n=$(( $(cat "$c" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$c"\n'
+        f'  if [ "$n" -le {failures} ]; then\n'
+        '    echo "AccessDenied #$n" >&2; exit 254\n'
+        "  fi\n"
+        f"  echo {status} ;;\n"
+        "*) echo output ;; esac",
+    )
+    return count
+
+
+@needs_bash
+def test_wait_step_fails_after_five_consecutive_api_errors(tmp_path):
+    _, stubs = _runner(tmp_path)
+    count = _flaky_aws(stubs, tmp_path, failures=99, status="Success")
+    res, _ = _run_step(
+        "wait", tmp_path, stubs, {"INSTANCE_ID": "i-test", "CMD_ID": "cmd-1"}
+    )
+    assert res.returncode == 1
+    assert count.read_text().strip() == "5"
+    assert "AccessDenied #5" in res.stdout + res.stderr
+
+
+@needs_bash
+def test_wait_step_tolerates_four_transient_api_errors(tmp_path):
+    _, stubs = _runner(tmp_path)
+    _flaky_aws(stubs, tmp_path, failures=4, status="Success")
+    res, _ = _run_step(
+        "wait", tmp_path, stubs, {"INSTANCE_ID": "i-test", "CMD_ID": "cmd-1"}
+    )
+    assert res.returncode == 0, res.stdout + res.stderr
+
+
+@needs_bash
+@pytest.mark.parametrize(("fail_first", "code"), [(5, 1), (2, 0)])
+def test_public_health_survives_curl_errors_and_reports_000_once(
+    tmp_path, fail_first, code
+):
+    _, stubs = _runner(tmp_path)
+    count = tmp_path / "curls"
+    body = json.dumps({"status": "ok", "version": SHA})
+    _stub(
+        stubs,
+        "curl",
+        f'c="{_posix(count)}"\n'
+        'n=$(( $(cat "$c" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$c"\n'
+        f'if [ "$n" -le {fail_first} ]; then printf 000; exit 7; fi\n'
+        'out=""; prev=""\n'
+        'for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done\n'
+        f"printf '%s' '{body}' > \"$out\"; printf 200",
+    )
+    res, _ = _run_step("health", tmp_path, stubs, {})
+    assert res.returncode == code, res.stdout + res.stderr
+    assert "HTTP 000" in res.stdout
+    assert "000000" not in res.stdout

@@ -26,6 +26,13 @@ on:
 # Nothing by default: each job asks for what it needs.
 permissions: {}
 
+# `bash --noprofile --norc -eo pipefail {0}` for every run step. Without it
+# GitHub uses `bash -e {0}` (no pipefail): a failing `git ls-remote | cut`
+# would pass as success.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   ci:
     uses: ./.github/workflows/ci.yml
@@ -63,6 +70,10 @@ jobs:
         id: head
         run: |
           head=$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/main | cut -f1)
+          # Unreadable answer = red run, never a silent green skip.
+          if [ -z "$head" ]; then
+            echo "::error::could not read the head of main from GitHub"; exit 1
+          fi
           if [ "$head" = "$GITHUB_SHA" ]; then
             echo "current=true" >> "$GITHUB_OUTPUT"
           else
@@ -157,7 +168,7 @@ jobs:
             'sudo -u fleet bash "$S" /srv/fleet/Fleet_server/.bundle-new "$SHA"'
             'systemctl restart fleet-app-gunicorn fleet-app-celery fleet-app-celery-beat'
             'ok=0'
-            "for i in \$(seq 1 30); do if curl -fsS -o /dev/null -H 'Host: fleet-api.foxugly.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8014/health/; then ok=1; break; fi; sleep 2; done"
+            "for i in \$(seq 1 30); do if curl -fsS --max-time 5 -o /dev/null -H 'Host: fleet-api.foxugly.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8014/health/; then ok=1; break; fi; sleep 2; done"
             "[ \"\$ok\" = 1 ] || { echo 'ERROR: fleet-app-gunicorn not healthy on 127.0.0.1:8014 after 60 s' >&2; journalctl -u fleet-app-gunicorn -n 50 --no-pager >&2 || true; exit 1; }"
             'chown -R -h fleet:fleet "$A"'
             'sudo -u fleet chmod -R g-w,o-rwx "$A"'
@@ -170,6 +181,7 @@ jobs:
           CMD_ID=$(aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \
             --document-name AWS-RunShellScript \
+            --timeout-seconds 120 \
             --comment "Deploy fleet-server ${GITHUB_SHA::7}" \
             --parameters "file://$params" \
             --query Command.CommandId --output text)
@@ -184,9 +196,22 @@ jobs:
           INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
           CMD_ID: ${{ steps.ssm.outputs.cmd_id }}
         run: |
+          # An API error counts as Pending (the invocation can take a few seconds
+          # to exist), but 5 in a row fail the step with the last error shown.
+          errors=0
           for _ in $(seq 1 260); do
-            STATUS=$(aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
-              --query Status --output text 2>/dev/null || echo Pending)
+            if STATUS=$(aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
+                --query Status --output text 2>"$RUNNER_TEMP/ssm-wait.err"); then
+              errors=0
+            else
+              errors=$((errors + 1))
+              if [ "$errors" -ge 5 ]; then
+                echo "::error::get-command-invocation failed 5 times in a row:"
+                cat "$RUNNER_TEMP/ssm-wait.err"
+                exit 1
+              fi
+              STATUS=Pending
+            fi
             case "$STATUS" in
               Success)
                 aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" --query StandardOutputContent --output text
@@ -208,8 +233,11 @@ jobs:
         if: steps.head.outputs.current == 'true'
         run: |
           for try in $(seq 1 5); do
+            # -w prints 000 on a connection error; `|| true` keeps set -e from
+            # aborting on curl's non-zero exit so the loop retries.
             code=$(curl -sS -o "$RUNNER_TEMP/health.json" -w '%{http_code}' --max-time 10 \
-              https://fleet-api.foxugly.com/health/ || echo 000)
+              https://fleet-api.foxugly.com/health/) || true
+            code=${code:-000}
             echo "Try $try: HTTP $code"
             if [ "$code" = "200" ]; then
               cat "$RUNNER_TEMP/health.json"; echo
