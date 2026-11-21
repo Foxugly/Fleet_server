@@ -45,10 +45,12 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "drf_spectacular",
     "rest_framework_simplejwt.token_blacklist",
     "apps.api_auth",
     "apps.inventory",
     "apps.collect",
+    "apps.api",
 ]
 
 MIDDLEWARE = [
@@ -169,6 +171,7 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
     ],
@@ -186,10 +189,23 @@ REST_FRAMEWORK = {
         # client IP AND per account (the one the mfa_token names).
         "mfa": _env("THROTTLE_MFA", "5/min"),
         "mfa_user": _env("THROTTLE_MFA_USER", "5/min"),
+        # Manual refresh fans out to external APIs.
+        "refresh": _env("THROTTLE_REFRESH", "6/min"),
     },
     # nginx is the single reverse proxy: trust only the last X-Forwarded-For
     # entry, never what the client put there itself.
     "NUM_PROXIES": 1,
+}
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Fleet API",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    # The schema reveals the API surface: same JWT as everything else.
+    "SERVE_PERMISSIONS": ["rest_framework.permissions.IsAuthenticated"],
+    "SERVE_AUTHENTICATION": [
+        "rest_framework_simplejwt.authentication.JWTAuthentication"
+    ],
 }
 
 SIMPLE_JWT = {
