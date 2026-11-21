@@ -11,6 +11,10 @@ TIMEOUT = 20
 class SourceError(Exception):
     """A data source could not be read (network, HTTP status, rate limit)."""
 
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
+
 
 def _path(url: str) -> str:
     return urlsplit(url).path
@@ -42,7 +46,10 @@ def get_response(session, url, *, params=None, allow_404=False):
     if resp.status_code == 404 and allow_404:
         return None
     if not 200 <= resp.status_code < 300:
-        raise SourceError(f"GET {_path(url)} returned HTTP {resp.status_code}")
+        raise SourceError(
+            f"GET {_path(url)} returned HTTP {resp.status_code}",
+            status=resp.status_code,
+        )
     return resp
 
 
@@ -56,8 +63,13 @@ def get_json(session, url, *, params=None, allow_404=False):
         raise SourceError(f"GET {_path(url)} returned invalid JSON") from exc
 
 
-def get_json_paginated(session, url, *, params=None, key=None, allow_404=False):
-    """Follow Link rel="next". With `key`, items come from body[key] (wrapped lists)."""
+def get_json_paginated(
+    session, url, *, params=None, key=None, allow_404=False, max_items=None
+):
+    """Follow Link rel="next". With `key`, items come from body[key] (wrapped lists).
+
+    Stops on Sentry's `results="false"` next link, and once `max_items` are collected.
+    """
     items: list[dict] = []
     next_url, next_params = url, params
     while next_url:
@@ -69,6 +81,9 @@ def get_json_paginated(session, url, *, params=None, key=None, allow_404=False):
         except ValueError as exc:
             raise SourceError(f"GET {_path(next_url)} returned invalid JSON") from exc
         items.extend(body[key] if key else body)
-        next_url = resp.links.get("next", {}).get("url")
+        if max_items is not None and len(items) >= max_items:
+            break
+        nxt = resp.links.get("next", {})
+        next_url = None if nxt.get("results") == "false" else nxt.get("url")
         next_params = None  # the next URL already carries its query string
     return items
