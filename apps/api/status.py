@@ -8,6 +8,7 @@ from typing import Any
 
 from apps.collect import store
 from apps.collect.intervals import INTERVALS
+from apps.collect.sources.github import OK_CONCLUSIONS
 
 STALE_FACTOR = 3
 TLS_RED_DAYS = 14
@@ -26,7 +27,8 @@ class Verdict:
 
 def _verdict(red: bool, count: int) -> Verdict:
     if red:
-        return Verdict("red", count)
+        # A red cell always shows at least one thing to look at.
+        return Verdict("red", max(count, 1))
     return Verdict("orange" if count else "green", count)
 
 
@@ -46,7 +48,9 @@ def _github(data: dict[str, Any]) -> Verdict:
     dependabot = data.get("dependabot_alerts") or []
     code_scanning = data.get("code_scanning") or []
     secrets = data.get("secret_scanning") or []
-    main_failed = (data.get("main_run") or {}).get("conclusion") == "failure"
+    main_run = data.get("main_run")
+    # Deny by default: any conclusion that is not explicitly OK is a failure.
+    main_failed = bool(main_run) and main_run.get("conclusion") not in OK_CONCLUSIONS
     count = (
         len(data.get("prs") or [])
         + len(data.get("issues") or [])
@@ -78,6 +82,10 @@ def _box(data: dict[str, Any]) -> Verdict:
     used = (data.get("disk") or {}).get("used_pct") or 0
     red = bool(failed) or any(p.get("security") for p in apt) or used >= DISK_RED_PCT
     return _verdict(red, len(apt) + len(failed) + (1 if reboot else 0))
+
+
+def _worst(*states: str) -> str:
+    return min(states, key=STATE_ORDER.index)
 
 
 _EVALUATORS = {
@@ -116,11 +124,12 @@ def cell(source: str, subjects: list[str], now: datetime) -> dict[str, Any]:
                 error = latest.error
                 error_collected_at = good.collected_at if good else None
         elif (now - latest.collected_at).total_seconds() > stale_after:
-            states.append("stale")
+            # Old data still counts: red stays red, green/orange become stale.
+            states.append(_worst(evaluate(latest.data).state, "stale"))
         else:
             states.append(evaluate(latest.data).state)
 
-    state = min(states, key=STATE_ORDER.index)
+    state = _worst(*states)
     if state == "error":
         collected = error_collected_at
     else:

@@ -202,3 +202,48 @@ def test_schema_served(client: APIClient) -> None:
     schema = resp.json()
     assert schema["info"]["title"] == "Fleet API"
     assert "/api/v1/overview/" in schema["paths"]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "conclusion", ["failure", "startup_failure", "cancelled", "timed_out", None]
+)
+def test_main_run_not_ok_is_red(conclusion: str | None) -> None:
+    snap("github", "Foxugly/r", {"main_run": {"conclusion": conclusion}})
+    c = cell("github", ["Foxugly/r"])
+    assert (c["state"], c["count"]) == ("red", 1)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("conclusion", ["success", "skipped", "neutral"])
+def test_main_run_ok_is_green(conclusion: str) -> None:
+    snap("github", "Foxugly/r", {"main_run": {"conclusion": conclusion}})
+    assert cell("github", ["Foxugly/r"])["state"] == "green"
+
+
+@pytest.mark.django_db
+def test_no_main_run_is_not_red() -> None:
+    snap("github", "Foxugly/r", {"main_run": None})
+    assert cell("github", ["Foxugly/r"])["state"] == "green"
+
+
+@pytest.mark.django_db
+def test_stale_red_stays_red_stale_green_is_stale() -> None:
+    snap("health", "down", {**GOOD_HEALTH, "status": 500}, age=16 * 60)
+    snap("health", "up", GOOD_HEALTH, age=16 * 60)
+    assert cell("health", ["down"])["state"] == "red"
+    assert cell("health", ["up"])["state"] == "stale"
+
+
+@pytest.mark.django_db
+def test_stale_orange_becomes_stale() -> None:
+    outdated = [{"name": "x", "current": "1", "latest": "2", "kind": "major"}]
+    snap("deps", "r:req.txt", {"outdated": outdated}, age=10 * 86400)
+    assert cell("deps", ["r:req.txt"])["state"] == "stale"
+
+
+@pytest.mark.django_db
+def test_red_cell_count_is_at_least_one() -> None:
+    snap("box", "box", {**BOX_BASE, "disk": {"mount": "/", "used_pct": 95}})
+    c = cell("box", ["box"])
+    assert (c["state"], c["count"]) == ("red", 1)
