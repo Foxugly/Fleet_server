@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.core.cache import cache
 from django.http import Http404
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
@@ -21,6 +22,8 @@ from .serializers import (
     QueuedSerializer,
     SiteDetailSerializer,
 )
+
+REFRESH_DEDUPE_SECONDS = 60
 
 SITE_SOURCES = ("health", "github", "sentry", "deps")
 
@@ -125,5 +128,12 @@ class RefreshView(APIView):
         task_name = REFRESH_TASKS.get(source)
         if task_name is None:
             raise Http404
+        # One queued run per source per minute: a double click (or a script)
+        # must not fan the same collection out to the external APIs twice.
+        if not cache.add(f"refresh:{source}", 1, timeout=REFRESH_DEDUPE_SECONDS):
+            return Response(
+                {"queued": source, "already_queued": True},
+                status=http.HTTP_202_ACCEPTED,
+            )
         getattr(tasks, task_name).delay()
         return Response({"queued": source}, status=http.HTTP_202_ACCEPTED)

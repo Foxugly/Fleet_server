@@ -247,3 +247,18 @@ def test_red_cell_count_is_at_least_one() -> None:
     snap("box", "box", {**BOX_BASE, "disk": {"mount": "/", "used_pct": 95}})
     c = cell("box", ["box"])
     assert (c["state"], c["count"]) == ("red", 1)
+
+
+@pytest.mark.django_db
+def test_refresh_dedupes_per_source(client: APIClient, monkeypatch: Any) -> None:
+    called: list[str] = []
+    monkeypatch.setattr(tasks.collect_github, "delay", lambda: called.append("g"))
+    monkeypatch.setattr(tasks.collect_sentry, "delay", lambda: called.append("s"))
+    first = client.post("/api/v1/refresh/github/")
+    second = client.post("/api/v1/refresh/github/")
+    other = client.post("/api/v1/refresh/sentry/")
+    assert first.json() == {"queued": "github"}
+    assert second.status_code == 202
+    assert second.json() == {"queued": "github", "already_queued": True}
+    assert other.json() == {"queued": "sentry"}
+    assert called == ["g", "s"]

@@ -71,3 +71,4 @@ class BoxSerializer(serializers.Serializer):
 
 class QueuedSerializer(serializers.Serializer):
     queued = serializers.CharField()
+    already_queued = serializers.BooleanField(required=False)
