@@ -28,9 +28,22 @@ Auth endpoints live under `/api/v1/auth/` (login, mfa/setup, mfa/verify, refresh
     .venv/Scripts/python.exe manage.py create_operator <username>
     .venv/Scripts/python.exe manage.py runserver
 
-If the Store Python 3.12 is broken, 3.14 works locally: the lock is universal and CI on
-3.12 is the authority. Env vars are read from the process environment (export them from
-your `.env`); SQLite is used when `DB_ENGINE` is empty.
+If `py -3.12` fails (broken Microsoft Store Python), use `py -3.14 -m venv .venv`: the
+lock is universal and CI on 3.12 is the authority.
+
+Nothing loads `.env` automatically: settings read only the process environment, so
+without this step you silently run on defaults (SQLite, DEBUG on). Load the file into the
+current shell before `migrate`, `runserver` or `celery`.
+
+PowerShell:
+
+    Get-Content .env | Where-Object { $_ -match '^\s*[^#].*=' } | ForEach-Object { $k, $v = $_ -split '=', 2; Set-Item "env:$($k.Trim())" $v.Trim() }
+
+Git Bash:
+
+    set -a; . ./.env; set +a
+
+SQLite is used when `DB_ENGINE` is empty.
 
 The operator enrols TOTP through the API at first sign-in (`POST /api/v1/auth/login/`,
 then `mfa/setup/` and `mfa/verify/`). `manage.py reset_mfa <username>` lifts a lockout
@@ -51,7 +64,7 @@ Collectors and beat locally (needs Redis; Windows requires the solo pool):
 Defaults in parentheses; all are listed in `.env.example`.
 
 General
-- `STATE` (DEV): `PROD` enables Sentry reporting; DEBUG defaults to off only in PROD.
+- `STATE` (DEV): `PROD` enables Sentry reporting (with `SENTRY_DSN` set); DEBUG defaults to off only in PROD.
 - `DEBUG` (true unless PROD): Django debug; when off, HTTPS/HSTS/secure cookies apply.
 - `SECRET_KEY`: required when DEBUG is off.
 - `ALLOWED_HOSTS` (127.0.0.1,localhost,testserver), `CSRF_TRUSTED_ORIGINS`: comma lists.
@@ -83,7 +96,7 @@ Collectors
 - `FLEET_INVENTORY_PATH` (inventory/fleet.yaml).
 
 Sentry (self-reporting)
-- `SENTRY_DSN`, `SENTRY_ENABLE` (report outside PROD), `SENTRY_ENVIRONMENT` (STATE),
+- `SENTRY_DSN`: reporting needs it AND (`STATE=PROD` or `SENTRY_ENABLE`). `SENTRY_ENABLE` (report outside PROD), `SENTRY_ENVIRONMENT` (STATE),
   `SENTRY_RELEASE`, `SENTRY_TRACES_SAMPLE_RATE` (0).
 
 ## Inventory

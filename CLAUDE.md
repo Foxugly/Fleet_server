@@ -19,6 +19,7 @@ box, dependency locks), Celery beat, read API behind password + TOTP. Fleet-wide
 - Lock: `uv pip compile requirements.in --generate-hashes --universal --python-version 3.12 -o requirements.txt`
   (3.14 is fine locally; CI on 3.12 is the authority)
 - Worker + beat locally: `python -m celery -A config worker -B --pool=solo -l info` (solo needed on Windows)
+- Nothing loads `.env`: load it into the shell first (PowerShell snippet in README, Git Bash `set -a; . ./.env; set +a`).
 - First operator: `manage.py create_operator <username>`, TOTP enrolment via the API.
 
 ## Conventions
