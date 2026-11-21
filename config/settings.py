@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import timedelta
 from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
@@ -44,6 +45,8 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "rest_framework_simplejwt.token_blacklist",
+    "apps.api_auth",
 ]
 
 MIDDLEWARE = [
@@ -133,6 +136,76 @@ FLEET_SENTRY_API = _env("FLEET_SENTRY_API", "https://de.sentry.io/api/0/")
 FLEET_INVENTORY_PATH = _env(
     "FLEET_INVENTORY_PATH", str(BASE_DIR / "inventory" / "fleet.yaml")
 )
+
+REST_FRAMEWORK = {
+    # SimpleJWT only: a short-lived access token kept in the SPA's memory, the
+    # refresh token in an HttpOnly cookie (apps/api_auth/refresh_cookie.py). No
+    # SessionAuthentication, so CSRF never applies to the API.
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+    "DEFAULT_RENDERER_CLASSES": [
+        "rest_framework.renderers.JSONRenderer",
+    ],
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": _env("THROTTLE_ANON", "60/min"),
+        "user": _env("THROTTLE_USER", "300/min"),
+        "login": _env("THROTTLE_LOGIN", "10/hour"),
+        # Per username, only FAILED password steps count (FLEET-7).
+        "login_username": _env("THROTTLE_LOGIN_USERNAME", "20/hour"),
+        # TOTP: a 6-digit code is guessable, so verify/confirm are bounded per
+        # client IP AND per account (the one the mfa_token names).
+        "mfa": _env("THROTTLE_MFA", "5/min"),
+        "mfa_user": _env("THROTTLE_MFA_USER", "5/min"),
+    },
+    # nginx is the single reverse proxy: trust only the last X-Forwarded-For
+    # entry, never what the client put there itself.
+    "NUM_PROXIES": 1,
+}
+
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=int(_env("JWT_ACCESS_MINUTES", "15"))),
+    # Sliding window: every refresh rotates the token and blacklists the old one.
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=int(_env("JWT_REFRESH_DAYS", "7"))),
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
+    "UPDATE_LAST_LOGIN": True,
+    "AUTH_HEADER_TYPES": ("Bearer",),
+}
+
+# Origins allowed to use the cookie mode (checked server-side on `Origin`).
+CORS_ALLOWED_ORIGINS = _env_list(
+    "CORS_ALLOWED_ORIGINS", "http://127.0.0.1:4200,http://localhost:4200"
+)
+if "*" in CORS_ALLOWED_ORIGINS:
+    raise ImproperlyConfigured("CORS_ALLOWED_ORIGINS must list explicit origins")
+
+# HttpOnly refresh cookie (web SPA only, opt-in via `X-Auth-Mode: cookie`).
+AUTH_REFRESH_COOKIE_NAME = _env("AUTH_REFRESH_COOKIE_NAME", "fleet_refresh")
+AUTH_REFRESH_COOKIE_PATH = "/api/v1/auth/"
+AUTH_REFRESH_COOKIE_SECURE = _env_bool("AUTH_REFRESH_COOKIE_SECURE", True)
+
+# Mandatory TOTP second factor. Secrets are encrypted at rest with Fernet; the
+# key is derived (HKDF-SHA256) from FLEET_MFA_ENCRYPTION_KEY when set, else from
+# SECRET_KEY. Changing the source key makes enrolled secrets unreadable: run
+# `reset_mfa` for the user, who then re-enrolls at the next sign-in.
+FLEET_MFA_ENCRYPTION_KEY = _env("FLEET_MFA_ENCRYPTION_KEY")
+#: Lifetime of the `mfa_token` handed out by the password step.
+FLEET_MFA_TOKEN_TTL_SECONDS = 300
+#: Wrong codes are counted on `MfaDevice` (reset by a success): every N-th one
+#: spends the `mfa_token`, the threshold locks the factor for
+#: FLEET_MFA_LOCKOUT_SECONDS (`manage.py reset_mfa <user>` lifts it at once).
+FLEET_MFA_MAX_FAILURES_PER_TOKEN = 3
+FLEET_MFA_LOCKOUT_THRESHOLD = 10
+FLEET_MFA_LOCKOUT_SECONDS = int(_env("FLEET_MFA_LOCKOUT_SECONDS", str(24 * 3600)))
+FLEET_MFA_ISSUER = "Fleet"
 
 if not DEBUG:
     SECURE_SSL_REDIRECT = True
