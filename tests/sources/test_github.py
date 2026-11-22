@@ -343,3 +343,40 @@ def test_check_runs_other_error_still_raises():
     )
     with pytest.raises(SourceError):
         collect_repo("Foxugly/x", token="t")
+
+
+@responses.activate
+@pytest.mark.parametrize(
+    "path, message",
+    [
+        (
+            "/code-scanning/alerts",
+            "Code scanning is not enabled for this repository.",
+        ),
+        (
+            "/secret-scanning/alerts",
+            "Advanced Security must be enabled for this repository.",
+        ),
+    ],
+)
+def test_scanning_off_on_private_repo_403_is_empty(path, message):
+    mock_all(**{path: resp(path, status=403, json={"message": message})})
+    out = collect_repo("Foxugly/x", token="t")
+    key = "code_scanning" if "code" in path else "secret_scanning"
+    assert out[key] == []
+
+
+@responses.activate
+def test_scanning_permission_403_still_raises():
+    path = "/code-scanning/alerts"
+    mock_all(
+        **{
+            path: resp(
+                path,
+                status=403,
+                json={"message": "Resource not accessible by personal access token"},
+            )
+        }
+    )
+    with pytest.raises(SourceError):
+        collect_repo("Foxugly/x", token="t")

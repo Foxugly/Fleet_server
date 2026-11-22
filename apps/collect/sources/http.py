@@ -12,10 +12,14 @@ MAX_PAGES = 100
 class SourceError(Exception):
     """A data source could not be read (network, HTTP status, rate limit)."""
 
-    def __init__(self, message: str, status: int | None = None, headers=None):
+    def __init__(
+        self, message: str, status: int | None = None, headers=None, body: str = ""
+    ):
         super().__init__(message)
         self.status = status
         self.headers = dict(headers or {})
+        #: Start of the response body, for callers telling 403s apart; never logged.
+        self.body = body
 
 
 def _path(url: str) -> str:
@@ -52,6 +56,7 @@ def get_response(session, url, *, params=None, allow_404=False):
             f"GET {_path(url)} returned HTTP {resp.status_code}",
             status=resp.status_code,
             headers=resp.headers,
+            body=resp.text[:500],
         )
     return resp
 
