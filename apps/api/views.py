@@ -21,7 +21,9 @@ from .serializers import (
     OverviewSerializer,
     QueuedSerializer,
     SiteDetailSerializer,
+    UpdatesSerializer,
 )
+from .updates import group_updates
 
 REFRESH_DEDUPE_SECONDS = 60
 
@@ -77,6 +79,29 @@ class OverviewView(APIView):
                 "generated_at": now.isoformat(),
                 "box": {"box": status.cell("box", ["box"], now)},
                 "sites": sites,
+            }
+        )
+
+
+class UpdatesView(APIView):
+    @extend_schema(operation_id="updates_retrieve", responses=UpdatesSerializer)
+    def get(self, request: Request) -> Response:
+        sites = load_inventory()
+        deps: dict[str, dict] = {}
+        alerts: dict[str, list[dict]] = {}
+        for site in sites:
+            for lock in subjects_for(site, "deps"):
+                good = store.latest_ok("deps", lock)
+                if good:
+                    deps[lock] = good.data
+            for repo in site.repos:
+                good = store.latest_ok("github", repo)
+                if good:
+                    alerts[repo] = good.data.get("dependabot_alerts") or []
+        return Response(
+            {
+                "generated_at": timezone.now().isoformat(),
+                "groups": group_updates(sites, deps, alerts),
             }
         )
 

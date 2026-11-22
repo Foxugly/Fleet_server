@@ -78,3 +78,29 @@ class BoxSerializer(serializers.Serializer):
 class QueuedSerializer(serializers.Serializer):
     queued = serializers.CharField()
     already_queued = serializers.BooleanField(required=False)
+
+
+class UpdateMemberSerializer(serializers.Serializer):
+    site = serializers.CharField()
+    repo = serializers.CharField()
+    lock = serializers.CharField(allow_null=True)
+    current = serializers.CharField(allow_null=True)
+
+
+class UpdateSecuritySerializer(serializers.Serializer):
+    alerts = serializers.IntegerField()
+    max_severity = serializers.CharField(allow_null=True)
+
+
+class UpdateGroupSerializer(serializers.Serializer):
+    ecosystem = serializers.CharField(allow_null=True)
+    package = serializers.CharField()
+    latest = serializers.CharField(allow_null=True)
+    kind = serializers.CharField(allow_null=True)
+    members = UpdateMemberSerializer(many=True)
+    security = UpdateSecuritySerializer(allow_null=True)
+
+
+class UpdatesSerializer(serializers.Serializer):
+    generated_at = serializers.DateTimeField()
+    groups = UpdateGroupSerializer(many=True)
