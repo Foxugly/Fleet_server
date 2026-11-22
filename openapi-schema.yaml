@@ -539,6 +539,8 @@ components:
       properties:
         slug:
           type: string
+        archived:
+          type: boolean
         repos:
           type: array
           items:
@@ -555,6 +557,7 @@ components:
           $ref: '#/components/schemas/SiteSources'
       required:
       - actions_allowed
+      - archived
       - deployed
       - repos
       - slug

@@ -2,6 +2,7 @@ import pytest
 
 from apps.collect import store, tasks
 from apps.collect.sources.http import SourceError
+from tests.helpers import make_apps
 
 INV = """sites:
   - slug: a
@@ -26,10 +27,8 @@ INV = """sites:
 
 
 @pytest.fixture(autouse=True)
-def inventory(settings, tmp_path):
-    p = tmp_path / "fleet.yaml"
-    p.write_text(INV, encoding="utf-8")
-    settings.FLEET_INVENTORY_PATH = str(p)
+def inventory(settings, db):
+    make_apps(INV)
     settings.FLEET_GITHUB_READ_TOKEN = "tok"
     settings.FLEET_SENTRY_TOKEN = "tok"
 

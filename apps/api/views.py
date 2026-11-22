@@ -13,7 +13,8 @@ from rest_framework.throttling import ScopedRateThrottle, UserRateThrottle
 from rest_framework.views import APIView
 
 from apps.collect import store, tasks
-from apps.inventory.loader import Site, get_site, load_inventory
+from apps.inventory.loader import Site, load_inventory
+from apps.inventory.models import App
 
 from . import status
 from .serializers import (
@@ -105,10 +106,11 @@ class UpdatesView(APIView):
 class SiteDetailView(APIView):
     @extend_schema(operation_id="site_retrieve", responses=SiteDetailSerializer)
     def get(self, request: Request, slug: str) -> Response:
-        try:
-            site = get_site(slug)
-        except KeyError:
-            raise Http404 from None
+        # An archived app still answers, so its history stays readable.
+        app = App.objects.filter(slug=slug).first()
+        if app is None:
+            raise Http404
+        site = app.to_site()
         now = timezone.now()
         sources: dict[str, Any] = {}
         for source in SITE_SOURCES:
@@ -120,6 +122,7 @@ class SiteDetailView(APIView):
         return Response(
             {
                 "slug": site.slug,
+                "archived": app.archived,
                 "repos": list(site.repos),
                 "vhosts": list(site.vhosts),
                 "deployed": site.deployed,

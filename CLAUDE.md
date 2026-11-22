@@ -7,8 +7,8 @@ box, dependency locks), Celery beat, read API behind password + TOTP. Fleet-wide
 ## Layout
 
 - `config/`: settings, urls, health, sentry, celery.
-- `apps/api_auth` (JWT + TOTP, `create_operator`, `reset_mfa`), `apps/inventory` (loads
-  `inventory/fleet.yaml`), `apps/collect` (`sources/` pure collectors, `store.py`, `tasks.py`,
+- `apps/api_auth` (JWT + TOTP, `create_operator`, `reset_mfa`), `apps/inventory` (`App` rows,
+  loader, validation), `apps/collect` (`sources/` pure collectors, `store.py`, `tasks.py`,
   `intervals.py`), `apps/api` (read endpoints, colour rules in `status.py`).
 
 ## Commands (Windows)
@@ -33,6 +33,9 @@ box, dependency locks), Celery beat, read API behind password + TOTP. Fleet-wide
 - CI uses a cached PostgreSQL 16 image as steps, never a `services:` container.
 - `openapi-schema.yaml` is committed: changing an endpoint = regenerate it with
   `manage.py spectacular --file openapi-schema.yaml --validate` (test + CI check it).
-- Adding a site: edit `inventory/fleet.yaml`; the GitHub read token must cover the new repo.
+- Adding a site: an `App` row, via the API / Fleet's Apps page (no YAML file any more); the
+  GitHub read token must cover the new repo. `get_site` returns active apps only.
+- Tests start with the 17 apps imported by migration 0002: use `tests.helpers.make_apps(yaml)`
+  to replace them with a deterministic inventory.
 - Collectors are pure functions (token in, dict out); tokens are read-only; never read other
   sites' venvs or `/etc/letsencrypt`. Prod runs as unprivileged user `fleet` (plan 3).

@@ -60,6 +60,7 @@ class SiteSourcesSerializer(serializers.Serializer):
 
 class SiteDetailSerializer(serializers.Serializer):
     slug = serializers.CharField()
+    archived = serializers.BooleanField()
     repos = serializers.ListField(child=serializers.CharField())
     vhosts = serializers.ListField(child=serializers.CharField())
     deployed = serializers.BooleanField()

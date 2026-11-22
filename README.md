@@ -10,7 +10,7 @@ serves the result to a future SPA, behind password + mandatory TOTP.
 - `config/`: settings, urls, `/health/`, Sentry init, Celery app.
 - `apps/api_auth`: JWT login, TOTP enrolment/verify, refresh cookie, throttles;
   commands `create_operator`, `reset_mfa`.
-- `apps/inventory`: loader for `inventory/fleet.yaml` (the list of sites).
+- `apps/inventory`: the apps of the fleet (`App` model, loader, validation, audit model).
 - `apps/collect`: `sources/` (pure collectors: github, sentry, health, box, deps),
   `store.py` (snapshots, 30-day purge), `tasks.py` (Celery tasks), `intervals.py`.
 - `apps/api`: read endpoints under `/api/v1/` (`overview/`, `sites/<slug>/`, `box/`,
@@ -107,7 +107,6 @@ Collectors
 - `FLEET_GITHUB_READ_TOKEN`: read-only token; must cover every repo in the inventory.
 - `FLEET_SENTRY_TOKEN`: read-only Sentry token.
 - `FLEET_SENTRY_ORG` (foxugly-srl), `FLEET_SENTRY_API` (https://de.sentry.io/api/0/).
-- `FLEET_INVENTORY_PATH` (inventory/fleet.yaml).
 
 Sentry (self-reporting)
 - `SENTRY_DSN`: reporting needs it AND (`STATE=PROD` or `SENTRY_ENABLE`). `SENTRY_ENABLE` (report outside PROD), `SENTRY_ENVIRONMENT` (STATE),
@@ -115,9 +114,12 @@ Sentry (self-reporting)
 
 ## Inventory
 
-Edit `inventory/fleet.yaml`: one entry per site with `slug`, `repos`, `vhosts`,
+The apps live in the database (`App` model), not in a file. The 17 original apps were
+imported by migration `0002_import_fleet_yaml`. Each app has `slug`, `repos`, `vhosts`,
 `health_path`, `sentry_projects`, `python_locks` / `npm_locks` (`Owner/Repo:path`),
-`deployed`, `actions_allowed`. A new repo must also be covered by the GitHub read token
+`deployed`, `actions_allowed`, and `archived_at` (an archived app is left out of the
+overview, collection and `/updates/`, but its detail page still answers). Adding or
+editing an app goes through the API / Fleet's "Apps" page (coming). A new repo must also be covered by the GitHub read token
 (add it to the token's repository selection), otherwise its collection errors.
 
 ## Collection intervals
