@@ -127,6 +127,9 @@ def test_alert_only_group() -> None:
                 {"site": "b", "repo": "Foxugly/b", "lock": None, "current": None},
             ],
             "security": {"alerts": 2, "max_severity": "critical"},
+            "branch": "deps/pillow-security",
+            "prs": [],
+            "progress": "none",
         }
     ]
 
@@ -244,6 +247,77 @@ def test_alert_only_suppressed_when_outdated_group_kept() -> None:
     assert groups[0]["security"] == {"alerts": 2, "max_severity": "high"}
 
 
+def test_group_branch_names() -> None:
+    sites = [site("a", (A_LOCK, NPM_A)), site("b", (B_LOCK, NPM_B))]
+    deps = {
+        A_LOCK: dep("Django", "6.0", "6.1.2", "minor"),
+        B_LOCK: dep("django", "6.0", "6.1.2", "minor"),
+        NPM_A: dep("chart.js", "4.0", "4.5.0", "minor", eco="npm"),
+        NPM_B: dep("chart.js", "4.0", "4.5.0", "minor", eco="npm"),
+    }
+    alerts = {
+        "Foxugly/a": [{"package": "pillow", "severity": "high"}],
+        "Foxugly/b": [{"package": "pillow", "severity": "high"}],
+    }
+    got = {g["package"]: g["branch"] for g in group_updates(sites, deps, alerts)}
+    assert got == {
+        "django": "deps/django-6.1.2",
+        "chart.js": "deps/chart.js-4.5.0",
+        "pillow": "deps/pillow-security",
+    }
+
+
+def pr(number: int, branch: str, checks: str, **extra: Any) -> dict:
+    return {
+        "number": number,
+        "url": f"https://x/{number}",
+        "branch": branch,
+        "checks": checks,
+        **extra,
+    }
+
+
+def test_progress_states() -> None:
+    sites = [site("a", (A_LOCK,)), site("b", (B_LOCK,))]
+    deps = {A_LOCK: multi("x"), B_LOCK: multi("x")}
+    br = "deps/x-2"
+
+    def run(prs: dict) -> dict:
+        return group_updates(sites, deps, {}, prs)[0]
+
+    assert run({})["progress"] == "none"
+    assert run({})["prs"] == []
+    # a PR on another branch, or without a branch (old snapshot), is ignored
+    other = {"Foxugly/a": [pr(1, "deps/y-2", "success"), {"number": 2, "url": "u"}]}
+    assert run(other)["progress"] == "none"
+    one = run({"Foxugly/a": [pr(1, br, "success")]})
+    assert one["progress"] == "in_progress"
+    assert one["prs"] == [
+        {"repo": "Foxugly/a", "number": 1, "url": "https://x/1", "checks": "success"}
+    ]
+    both = {"Foxugly/a": [pr(1, br, "success")], "Foxugly/b": [pr(2, br, "success")]}
+    assert run(both)["progress"] == "possible"
+    draft = {
+        "Foxugly/a": [pr(1, br, "success", draft=True)],
+        "Foxugly/b": [pr(2, br, "success")],
+    }
+    assert run(draft)["progress"] == "possible"
+    pending = {"Foxugly/a": [pr(1, br, "pending")], "Foxugly/b": [pr(2, br, "success")]}
+    assert run(pending)["progress"] == "in_progress"
+    nochecks = {"Foxugly/a": [pr(1, br, "none")], "Foxugly/b": [pr(2, br, "success")]}
+    assert run(nochecks)["progress"] == "in_progress"
+    red = {"Foxugly/a": [pr(1, br, "failure")]}  # blocked beats a missing PR
+    assert run(red)["progress"] == "blocked"
+
+
+def test_prs_only_from_member_repos() -> None:
+    sites = [site("a", (A_LOCK,)), site("b", (B_LOCK,)), site("c", (C_LOCK,))]
+    deps = {A_LOCK: multi("x"), B_LOCK: multi("x")}
+    prs = {"Foxugly/c": [pr(9, "deps/x-2", "success")]}
+    g = group_updates(sites, deps, {}, prs)[0]
+    assert g["prs"] == [] and g["progress"] == "none"
+
+
 @pytest.mark.django_db
 def test_updates_endpoint_shape_and_auth(
     auth_client: APIClient, inventory: None
@@ -286,3 +360,39 @@ def test_updates_uses_last_good_snapshot(
     g = body["groups"][0]
     assert g["package"] == "django"
     assert [m["site"] for m in g["members"]] == ["alpha", "beta"]
+
+
+@pytest.mark.django_db
+def test_updates_view_links_prs(
+    auth_client: APIClient, settings: Any, tmp_path: Any
+) -> None:
+    inv = tmp_path / "inv.yaml"
+    inv.write_text(THREE_SITES, encoding="utf-8")
+    settings.FLEET_INVENTORY_PATH = str(inv)
+    for s in ("alpha", "beta"):
+        snap(
+            "deps",
+            f"Foxugly/{s}:requirements.txt",
+            dep("django", "6.0", "6.1", "minor"),
+        )
+    snap("github", "Foxugly/alpha", {"prs": [pr(5, "deps/django-6.1", "success")]})
+    g = auth_client.get("/api/v1/updates/").json()["groups"][0]
+    assert g["branch"] == "deps/django-6.1"
+    assert g["progress"] == "in_progress"
+    assert [p["number"] for p in g["prs"]] == [5]
+
+
+@pytest.mark.django_db
+def test_latest_ok_many() -> None:
+    from apps.collect import store
+
+    snap("deps", "a", {"v": 1}, age=100)
+    snap("deps", "a", ok=False, error="boom", age=10)
+    snap("deps", "b", {"v": 1}, age=100)
+    newest = snap("deps", "b", {"v": 2}, age=50)
+    snap("deps", "other", {"v": 9})
+    snap("github", "a", {"v": 7})
+    got = store.latest_ok_many("deps", ["a", "b", "never"])
+    assert set(got) == {"a", "b"}
+    assert got["a"].data == {"v": 1}
+    assert got["b"].id == newest.id

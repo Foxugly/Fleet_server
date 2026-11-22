@@ -128,6 +128,7 @@ def _prs(session, base: str) -> list[dict]:
                 "author": login,
                 "is_dependabot": login == "dependabot[bot]",
                 "draft": bool(pr.get("draft")),
+                "branch": pr["head"]["ref"],
                 "checks": _checks(session, base, pr["head"]["sha"]),
                 "merge_state": detail.get("mergeable_state", "unknown"),
                 "created_at": pr["created_at"],

@@ -92,6 +92,13 @@ class UpdateSecuritySerializer(serializers.Serializer):
     max_severity = serializers.CharField(allow_null=True)
 
 
+class UpdatePrSerializer(serializers.Serializer):
+    repo = serializers.CharField()
+    number = serializers.IntegerField()
+    url = serializers.CharField()
+    checks = serializers.CharField()
+
+
 class UpdateGroupSerializer(serializers.Serializer):
     ecosystem = serializers.CharField(allow_null=True)
     package = serializers.CharField()
@@ -99,6 +106,11 @@ class UpdateGroupSerializer(serializers.Serializer):
     kind = serializers.CharField(allow_null=True)
     members = UpdateMemberSerializer(many=True)
     security = UpdateSecuritySerializer(allow_null=True)
+    branch = serializers.CharField()
+    prs = UpdatePrSerializer(many=True)
+    progress = serializers.ChoiceField(
+        choices=["none", "in_progress", "possible", "blocked"]
+    )
 
 
 class UpdatesSerializer(serializers.Serializer):

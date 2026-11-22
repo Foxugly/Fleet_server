@@ -32,8 +32,40 @@ def _key(ecosystem: str, name: str) -> str:
     return name.lower() if ecosystem == "npm" else _norm(name)
 
 
+def _track(group: dict, prs: dict[str, list[dict]]) -> None:
+    """Add `branch`, `prs` and `progress`: the PRs opened on the group's branch."""
+    suffix = group["latest"] or "security"
+    branch = f"deps/{group['package']}-{suffix}"
+    repos = list(dict.fromkeys(m["repo"] for m in group["members"]))
+    found = [
+        {
+            "repo": repo,
+            "number": pr["number"],
+            "url": pr["url"],
+            "checks": pr.get("checks") or "none",
+        }
+        for repo in repos
+        for pr in prs.get(repo) or []
+        if pr.get("branch") == branch
+    ]
+    if not found:
+        progress = "none"
+    elif any(p["checks"] == "failure" for p in found):
+        progress = "blocked"
+    elif {p["repo"] for p in found} != set(repos) or any(
+        p["checks"] != "success" for p in found
+    ):
+        progress = "in_progress"
+    else:
+        progress = "possible"
+    group.update(branch=branch, prs=found, progress=progress)
+
+
 def group_updates(
-    sites: list[Site], deps: dict[str, dict], alerts: dict[str, list[dict]]
+    sites: list[Site],
+    deps: dict[str, dict],
+    alerts: dict[str, list[dict]],
+    prs: dict[str, list[dict]] | None = None,
 ) -> list[dict]:
     site_repos = {s.slug: s.repos for s in sites}
 
@@ -141,6 +173,9 @@ def group_updates(
         sec = g["security"]
         rank = SEVERITY_RANK[sec["max_severity"]] if sec else 0
         return (-rank, -len({m["site"] for m in g["members"]}), g["package"])
+
+    for g in groups:
+        _track(g, prs or {})
 
     groups.sort(key=order)
     return groups

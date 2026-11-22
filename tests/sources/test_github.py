@@ -51,6 +51,7 @@ def test_collect_repo_shapes_output():
             "author": "dependabot[bot]",
             "is_dependabot": True,
             "draft": False,
+            "branch": "deps/django-6.1.2",
             "checks": "failure",
             "merge_state": "blocked",
             "created_at": "2026-11-01T10:00:00Z",

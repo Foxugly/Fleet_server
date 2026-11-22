@@ -476,6 +476,18 @@ components:
       - cells
       - deployed
       - slug
+    ProgressEnum:
+      enum:
+      - none
+      - in_progress
+      - possible
+      - blocked
+      type: string
+      description: |-
+        * `none` - none
+        * `in_progress` - in_progress
+        * `possible` - possible
+        * `blocked` - blocked
     Queued:
       type: object
       properties:
@@ -657,12 +669,23 @@ components:
           allOf:
           - $ref: '#/components/schemas/UpdateSecurity'
           nullable: true
+        branch:
+          type: string
+        prs:
+          type: array
+          items:
+            $ref: '#/components/schemas/UpdatePr'
+        progress:
+          $ref: '#/components/schemas/ProgressEnum'
       required:
+      - branch
       - ecosystem
       - kind
       - latest
       - members
       - package
+      - progress
+      - prs
       - security
     UpdateMember:
       type: object
@@ -682,6 +705,22 @@ components:
       - lock
       - repo
       - site
+    UpdatePr:
+      type: object
+      properties:
+        repo:
+          type: string
+        number:
+          type: integer
+        url:
+          type: string
+        checks:
+          type: string
+      required:
+      - checks
+      - number
+      - repo
+      - url
     UpdateSecurity:
       type: object
       properties:

@@ -90,14 +90,13 @@ class UpdatesView(APIView):
         locks = [lock for site in sites for lock in subjects_for(site, "deps")]
         repos = [repo for site in sites for repo in site.repos]
         deps = {k: v.data for k, v in store.latest_ok_many("deps", locks).items()}
-        alerts = {
-            k: v.data.get("dependabot_alerts") or []
-            for k, v in store.latest_ok_many("github", repos).items()
-        }
+        github = store.latest_ok_many("github", repos)
+        alerts = {k: v.data.get("dependabot_alerts") or [] for k, v in github.items()}
+        prs = {k: v.data.get("prs") or [] for k, v in github.items()}
         return Response(
             {
                 "generated_at": timezone.now().isoformat(),
-                "groups": group_updates(sites, deps, alerts),
+                "groups": group_updates(sites, deps, alerts, prs),
             }
         )
 
