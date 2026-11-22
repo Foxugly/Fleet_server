@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+from django.db.models import OuterRef, Subquery
 from django.utils import timezone
 
 from .models import Snapshot
@@ -39,6 +40,19 @@ def latest_ok(source: str, subject: str) -> Snapshot | None:
         .order_by("-collected_at", "-id")
         .first()
     )
+
+
+def latest_ok_many(source: str, subjects: list[str]) -> dict[str, Snapshot]:
+    """Latest ok snapshot per subject, in one query; absent subjects are omitted."""
+    newest = (
+        Snapshot.objects.filter(source=source, subject=OuterRef("subject"), ok=True)
+        .order_by("-collected_at", "-id")
+        .values("id")[:1]
+    )
+    rows = Snapshot.objects.filter(
+        source=source, subject__in=subjects, ok=True, id=Subquery(newest)
+    )
+    return {row.subject: row for row in rows}
 
 
 def purge_older_than(days: int = 30) -> int:

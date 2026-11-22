@@ -12,42 +12,56 @@ KIND_RANK = {"unknown": 0, "patch": 1, "minor": 2, "major": 3}
 SEVERITY_RANK = {"low": 1, "medium": 2, "high": 3, "critical": 4}
 
 
+def _severity(raw: Any) -> str:
+    value = str(raw or "").lower()
+    if value == "moderate":
+        value = "medium"
+    return value if value in SEVERITY_RANK else "low"
+
+
 def _security(alerts: list[dict]) -> dict[str, Any] | None:
     if not alerts:
         return None
-    worst = max(
-        (str(a.get("severity", "")).lower() for a in alerts),
-        key=lambda s: SEVERITY_RANK.get(s, 0),
-    )
+    worst = max((_severity(a.get("severity")) for a in alerts), key=SEVERITY_RANK.get)
     return {"alerts": len(alerts), "max_severity": worst}
+
+
+def _key(ecosystem: str, name: str) -> str:
+    # PyPI names are normalised (as the collector stores them); npm names are
+    # case-insensitive but `.`/`_` are meaningful (chart.js is not chart-js).
+    return name.lower() if ecosystem == "npm" else _norm(name)
 
 
 def group_updates(
     sites: list[Site], deps: dict[str, dict], alerts: dict[str, list[dict]]
 ) -> list[dict]:
-    # package -> (site, repo) -> alerts of that package in that repo.
-    alert_index: dict[str, dict[tuple[str, str], list[dict]]] = defaultdict(dict)
-    for site in sites:
-        for repo in site.repos:
-            by_pkg: dict[str, list[dict]] = defaultdict(list)
-            for alert in alerts.get(repo) or []:
-                if alert.get("package"):
-                    by_pkg[_norm(str(alert["package"]))].append(alert)
-            for pkg, items in by_pkg.items():
-                alert_index[pkg][(site.slug, repo)] = items
+    site_repos = {s.slug: s.repos for s in sites}
 
+    def repo_alerts(repo: str, matches) -> list[dict]:
+        return [
+            a
+            for a in alerts.get(repo) or []
+            if a.get("package") and matches(str(a["package"]))
+        ]
+
+    # (key, ecosystem) -> (display name, members by (site, lock))
     buckets: dict[tuple[str, str, str], dict[tuple[str, str], dict]] = defaultdict(dict)
+    display: dict[tuple[str, str, str], str] = {}
     for site in sites:
         for lock in (*site.python_locks, *site.npm_locks):
             data = deps.get(lock)
             if not data:
                 continue
+            ecosystem = str(data.get("ecosystem") or "")
             repo = lock.partition(":")[0]
             for item in data.get("outdated") or []:
                 name, latest = item.get("name"), item.get("latest")
                 if not name or not latest:
                     continue
-                key = (str(data.get("ecosystem") or ""), _norm(str(name)), latest)
+                key = (ecosystem, _key(ecosystem, str(name)), latest)
+                display.setdefault(
+                    key, _norm(str(name)) if ecosystem != "npm" else str(name)
+                )
                 buckets[key][(site.slug, lock)] = {
                     "site": site.slug,
                     "repo": repo,
@@ -57,16 +71,28 @@ def group_updates(
                 }
 
     groups: list[dict] = []
-    for (ecosystem, package, latest), found in buckets.items():
+    kept: set[str] = set()  # lowercase + normalised spellings of kept packages
+    for key, found in buckets.items():
+        ecosystem, name_key, latest = key
         members = list(found.values())
-        if len({m["site"] for m in members}) < 2:
+        member_sites = {m["site"] for m in members}
+        if len(member_sites) < 2:
             continue
         kind = max((m["kind"] for m in members), key=lambda k: KIND_RANK.get(k, 0))
-        hits = [a for items in alert_index.get(package, {}).values() for a in items]
+        # Only alerts from the member sites' repos, each repo counted once.
+        repos = dict.fromkeys(r for s in sorted(member_sites) for r in site_repos[s])
+        hits = [
+            a
+            for repo in repos
+            for a in repo_alerts(
+                repo, lambda p, k=name_key, e=ecosystem: _key(e, p) == k
+            )
+        ]
+        kept.add(name_key)
         groups.append(
             {
                 "ecosystem": ecosystem,
-                "package": package,
+                "package": display[key],
                 "latest": latest,
                 "kind": kind,
                 "members": [
@@ -77,21 +103,34 @@ def group_updates(
             }
         )
 
-    kept = {g["package"] for g in groups}
-    for package, per_repo in alert_index.items():
-        if package in kept or len({s for s, _ in per_repo}) < 2:
+    # Alert-only groups: ecosystem is unknown, so match on the normalised name.
+    alert_pkgs: dict[str, dict[tuple[str, str], list[dict]]] = defaultdict(dict)
+    shown: dict[str, str] = {}
+    for site in sites:
+        for repo in site.repos:
+            for a in repo_alerts(repo, lambda _p: True):
+                pkg = str(a["package"])
+                shown.setdefault(_norm(pkg), pkg.lower())
+                alert_pkgs[_norm(pkg)].setdefault((site.slug, repo), []).append(a)
+    for norm, per_repo in alert_pkgs.items():
+        if norm in kept or shown[norm] in kept:
             continue
+        if len({s for s, _ in per_repo}) < 2:
+            continue
+        by_repo: dict[str, list[dict]] = {}
+        for (_s, repo), items in per_repo.items():
+            by_repo[repo] = items  # a repo shared by two sites counts once
         groups.append(
             {
                 "ecosystem": None,
-                "package": package,
+                "package": shown[norm],
                 "latest": None,
                 "kind": None,
                 "members": [
                     {"site": s, "repo": r, "lock": None, "current": None}
                     for s, r in per_repo
                 ],
-                "security": _security([a for v in per_repo.values() for a in v]),
+                "security": _security([a for v in by_repo.values() for a in v]),
             }
         )
 
@@ -100,7 +139,7 @@ def group_updates(
 
     def order(g: dict) -> tuple[int, int, str]:
         sec = g["security"]
-        rank = SEVERITY_RANK.get(sec["max_severity"], 0) if sec else -1
+        rank = SEVERITY_RANK[sec["max_severity"]] if sec else 0
         return (-rank, -len({m["site"] for m in g["members"]}), g["package"])
 
     groups.sort(key=order)

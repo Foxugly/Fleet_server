@@ -87,17 +87,13 @@ class UpdatesView(APIView):
     @extend_schema(operation_id="updates_retrieve", responses=UpdatesSerializer)
     def get(self, request: Request) -> Response:
         sites = load_inventory()
-        deps: dict[str, dict] = {}
-        alerts: dict[str, list[dict]] = {}
-        for site in sites:
-            for lock in subjects_for(site, "deps"):
-                good = store.latest_ok("deps", lock)
-                if good:
-                    deps[lock] = good.data
-            for repo in site.repos:
-                good = store.latest_ok("github", repo)
-                if good:
-                    alerts[repo] = good.data.get("dependabot_alerts") or []
+        locks = [lock for site in sites for lock in subjects_for(site, "deps")]
+        repos = [repo for site in sites for repo in site.repos]
+        deps = {k: v.data for k, v in store.latest_ok_many("deps", locks).items()}
+        alerts = {
+            k: v.data.get("dependabot_alerts") or []
+            for k, v in store.latest_ok_many("github", repos).items()
+        }
         return Response(
             {
                 "generated_at": timezone.now().isoformat(),
