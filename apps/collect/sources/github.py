@@ -2,7 +2,7 @@
 
 import requests
 
-from .http import get_json, get_json_paginated
+from .http import SourceError, get_json, get_json_paginated
 
 API = "https://api.github.com"
 PER_PAGE = {"per_page": 100}
@@ -25,10 +25,32 @@ def _session(token: str) -> requests.Session:
     return s
 
 
+def _check_runs(session, base: str, sha: str) -> list[dict]:
+    """Check runs of a commit; [] when the token lacks `checks=read`.
+
+    Reading check runs of a private repo needs `checks=read`, which fine-grained
+    tokens cannot hold: the PR's state then falls back to commit statuses. Only
+    the 403 naming that permission is tolerated (a secondary rate limit is a 403
+    too and must still fail the collection).
+    """
+    try:
+        return get_json_paginated(
+            session,
+            f"{base}/commits/{sha}/check-runs",
+            params=PER_PAGE,
+            key="check_runs",
+        )
+    except SourceError as exc:
+        accepted = {k.lower(): v for k, v in exc.headers.items()}.get(
+            "x-accepted-github-permissions", ""
+        )
+        if exc.status == 403 and "checks=read" in accepted:
+            return []
+        raise
+
+
 def _checks(session, base: str, sha: str) -> str:
-    runs = get_json_paginated(
-        session, f"{base}/commits/{sha}/check-runs", params=PER_PAGE, key="check_runs"
-    )
+    runs = _check_runs(session, base, sha)
     statuses = get_json(session, f"{base}/commits/{sha}/status", params=PER_PAGE)[
         "statuses"
     ]
