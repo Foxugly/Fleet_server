@@ -22,7 +22,7 @@ STATE_ORDER = ["error", "red", "stale", "orange", "green", "none"]
 Reason = dict[str, Any]  # {"code": str, "params": {name: int | str}}
 
 #: Reasons whose `n` is the cell's aggregated `count`, not a per-subject number.
-COUNT_CODES = {"open_items", "unresolved", "outdated", "updates"}
+COUNT_CODES = {"open_items", "unresolved", "outdated"}
 
 
 def _reason(code: str, **params: int | str) -> Reason:
@@ -168,7 +168,7 @@ def cell(source: str, subjects: list[str], now: datetime) -> dict[str, Any]:
             ok_times.append(good.collected_at)
             count += evaluate(good.data).count
         if latest is None:
-            verdicts.append(("stale", ()))
+            verdicts.append(("stale", (_reason("never_collected"),)))
         elif not latest.ok:
             verdicts.append(("error", (_reason("collect_error"),)))
             if not error:

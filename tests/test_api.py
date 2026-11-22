@@ -10,7 +10,6 @@ from rest_framework.test import APIClient
 from apps.api import status
 from apps.collect import tasks
 from apps.collect.models import Snapshot
-from tests.mfa_helpers import enroll, login
 
 CREDS = {"username": "fleet-admin", "password": "fleet-password"}
 
@@ -38,21 +37,6 @@ BOX_BASE = {
     "failed_units": [],
     "disk": {"mount": "/", "used_pct": 50},
 }
-
-
-@pytest.fixture
-def inventory(settings: Any, tmp_path: Any) -> None:
-    path = tmp_path / "fleet.yaml"
-    path.write_text(INVENTORY, encoding="utf-8")
-    settings.FLEET_INVENTORY_PATH = str(path)
-
-
-@pytest.fixture
-def client(api_user: Any) -> APIClient:
-    c = APIClient()
-    resp = login(c, CREDS, enroll(api_user))
-    c.credentials(HTTP_AUTHORIZATION=f"Bearer {resp.json()['access']}")
-    return c
 
 
 def snap(

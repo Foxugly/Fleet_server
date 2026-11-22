@@ -6,9 +6,7 @@ from typing import Any
 import pytest
 from rest_framework.test import APIClient
 
-from tests.test_api import BOX_BASE, GOOD_HEALTH, cell, client, inventory, snap
-
-__all__ = ["client", "inventory"]  # re-exported pytest fixtures
+from tests.test_api import BOX_BASE, GOOD_HEALTH, cell, snap
 
 
 def reason(source: str, subjects: list[str]) -> dict[str, Any] | None:
@@ -102,15 +100,27 @@ def test_meta_reasons() -> None:
     snap("health", "e", ok=False, error="boom")
     assert reason("health", ["e"]) == {"code": "collect_error", "params": {}}
 
-    fresh = snap("health", "old", GOOD_HEALTH, age=10)
     stale = snap("health", "stale", GOOD_HEALTH, age=10**6)
     r = reason("health", ["stale"])
     assert r is not None and r["code"] == "stale"
     assert datetime.fromisoformat(r["params"]["collected_at"]) == stale.collected_at
-    assert fresh.pk != stale.pk
+
+    assert reason("health", ["never"]) == {"code": "never_collected", "params": {}}
 
     snap("health", "redold", {**GOOD_HEALTH, "status": 500}, age=10**6)
     assert reason("health", ["redold"])["code"] == "http_status"  # type: ignore[index]
+
+
+@pytest.mark.django_db
+def test_updates_reason_counts_packages_not_cell_count() -> None:
+    snap(
+        "box",
+        "b",
+        {**BOX_BASE, "apt": [{"security": False}] * 2, "reboot_required": True},
+    )
+    c = cell("box", ["b"])
+    assert c["count"] == 3
+    assert c["reason"] == {"code": "updates", "params": {"n": 2}}
 
 
 @pytest.mark.django_db
