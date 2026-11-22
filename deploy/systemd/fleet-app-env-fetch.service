@@ -7,13 +7,19 @@ Description=Fleet: configuration from SSM to /run/fleet/.env
 After=network-online.target
 Wants=network-online.target
 Before=fleet-app-gunicorn.service fleet-app-celery.service fleet-app-celery-beat.service
+# Retry a failed fetch (SSM or network not ready at boot): at most 5 starts in 5 min.
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 User=root
-# /run/fleet: 750 root:fleet (the script sets the group). fleet can traverse it,
-# www-data cannot: that group reads every other site's .env.
+# /run/fleet: 750 root:fleet. Without Group=, systemd chowns RuntimeDirectory to
+# root:root at every start, and a failed fetch would leave the old .env
+# unreadable by fleet. fleet can traverse it, www-data cannot: that group reads
+# every other site's .env.
+Group=fleet
 RuntimeDirectory=fleet
 RuntimeDirectoryMode=0750
 RuntimeDirectoryPreserve=yes
@@ -33,6 +39,9 @@ NoNewPrivileges=yes
 RestrictSUIDSGID=yes
 ExecStart=/usr/local/sbin/fleet-app-env-fetch.sh
 TimeoutStartSec=120
+# Valid on a oneshot since systemd 244 (Ubuntu 24.04: 255).
+Restart=on-failure
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target

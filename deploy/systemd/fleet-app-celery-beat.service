@@ -3,7 +3,10 @@
 [Unit]
 Description=Fleet: Celery beat
 After=network.target fleet-app-env-fetch.service postgresql.service redis-server.service fleet-app-celery.service
-Requires=fleet-app-env-fetch.service
+# Wants=, not Requires=: restarting env-fetch (secret rotation) must not stop
+# the app, nor leave it stopped if the fetch fails. EnvironmentFile= (no `-`)
+# still refuses to start without /run/fleet/.env.
+Wants=fleet-app-env-fetch.service
 
 [Service]
 Type=simple

@@ -188,9 +188,16 @@ fleet_manage reset_mfa <username>         # lost phone or lockout: re-enrol at n
 
 ```bash
 sudo systemctl restart fleet-app-env-fetch
+sudo stat -c '%a %U:%G %s %y %n' /run/fleet /run/fleet/.env  # 750 root:fleet, 640 fleet:fleet, fresh mtime
+sudo test -s /run/fleet/.env && echo ok                       # stop here if this fails
 sudo systemctl restart fleet-app-gunicorn fleet-app-celery fleet-app-celery-beat
 ```
 
+The app units only `Want` the oneshot (no `Requires=`): restarting it does not touch them, and
+a failed fetch keeps the current `.env` and leaves them running on the old values (check
+`journalctl -u fleet-app-env-fetch -n 50`). Restart them only once the check above passes.
+At boot the oneshot retries (`Restart=on-failure`, 5 tries in 5 min), and the app units refuse
+to start without `/run/fleet/.env` (`EnvironmentFile=` without `-`).
 A deploy does not re-read SSM (`enable --now` starts the oneshot only once).
 `fleet-app-env-fetch` refuses (and keeps the current `.env`) a parameter whose name is not
 `^[A-Z][A-Z0-9_]*$` or is `PATH`, `LD_*`, `PYTHON*`, `BASH_ENV`, `ENV`, `IFS`, `HOME`, `SHELL`,

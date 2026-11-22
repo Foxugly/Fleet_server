@@ -26,7 +26,7 @@ HARDENING = (
     "Group=fleet",
     "WorkingDirectory=/srv/fleet/Fleet_server",
     "EnvironmentFile=/run/fleet/.env",
-    "Requires=fleet-app-env-fetch.service",
+    "Wants=fleet-app-env-fetch.service",
 )
 
 
@@ -55,6 +55,19 @@ def test_app_units_are_hardened_and_run_as_fleet(unit):
     assert "django" not in directives
     after = next(ln for ln in lines if ln.startswith("After="))
     assert "postgresql.service" in after and "redis-server.service" in after
+    assert "fleet-app-env-fetch.service" in after
+
+
+@pytest.mark.parametrize("unit", APP_UNITS)
+def test_app_units_do_not_require_env_fetch(unit):
+    """Requires= would stop the app when env-fetch restarts and fails (rotation);
+    Wants= + After= orders the boot, and EnvironmentFile= (no `-`) still blocks a
+    start without /run/fleet/.env."""
+    lines = _directives(_read(SYSTEMD / f"{unit}.service"))
+    for ln in lines:
+        if ln.startswith(("Requires=", "BindsTo=", "Requisite=", "PartOf=")):
+            assert "fleet-app-env-fetch" not in ln, f"{unit}: {ln}"
+    assert "EnvironmentFile=/run/fleet/.env" in lines
 
 
 def test_only_gunicorn_keeps_db_connections():
@@ -105,6 +118,35 @@ def test_env_fetch_unit_is_a_root_oneshot():
         "ExecStart=/usr/local/sbin/fleet-app-env-fetch.sh",
     ):
         assert directive in lines, directive
+
+
+def _sections(text: str) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    current = ""
+    for ln in _directives(text):
+        if ln.startswith("[") and ln.endswith("]"):
+            current = ln
+            out[current] = []
+        else:
+            out.setdefault(current, []).append(ln)
+    return out
+
+
+def test_env_fetch_runtime_dir_keeps_the_fleet_group():
+    """User=root alone: systemd chowns /run/fleet to root:root at each start, so a
+    failed fetch would leave .env unreadable by fleet. Group=fleet keeps root:fleet."""
+    service = _sections(_read(SYSTEMD / "fleet-app-env-fetch.service"))["[Service]"]
+    assert "User=root" in service
+    assert "Group=fleet" in service
+
+
+def test_env_fetch_retries_at_boot():
+    sections = _sections(_read(SYSTEMD / "fleet-app-env-fetch.service"))
+    assert "Restart=on-failure" in sections["[Service]"]
+    assert "RestartSec=10" in sections["[Service]"]
+    # Rate-limit settings belong to [Unit] (systemd >= 230).
+    assert "StartLimitIntervalSec=300" in sections["[Unit]"]
+    assert "StartLimitBurst=5" in sections["[Unit]"]
 
 
 def test_env_fetch_script_keeps_the_env_away_from_www_data():
