@@ -26,10 +26,12 @@ def _session(token: str) -> requests.Session:
 
 
 def _check_runs(session, base: str, sha: str) -> list[dict]:
-    """Check runs of a commit; [] on a 403.
+    """Check runs of a commit; [] when the token lacks `checks=read`.
 
     Reading check runs of a private repo needs `checks=read`, which fine-grained
-    tokens cannot hold: on a 403 the PR's state falls back to commit statuses.
+    tokens cannot hold: the PR's state then falls back to commit statuses. Only
+    the 403 naming that permission is tolerated (a secondary rate limit is a 403
+    too and must still fail the collection).
     """
     try:
         return get_json_paginated(
@@ -39,7 +41,10 @@ def _check_runs(session, base: str, sha: str) -> list[dict]:
             key="check_runs",
         )
     except SourceError as exc:
-        if exc.status == 403:
+        accepted = {k.lower(): v for k, v in exc.headers.items()}.get(
+            "x-accepted-github-permissions", ""
+        )
+        if exc.status == 403 and "checks=read" in accepted:
             return []
         raise
 
