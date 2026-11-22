@@ -403,3 +403,128 @@ def test_env_fetch_keeps_the_old_env_on_failure(env_fetch, params):
     assert res.returncode != 0
     assert _env_lines(out_dir) == ["OLD=1"]
     assert not (out_dir / ".env.tmp").exists()
+
+
+# --------------------------------------------------------------------------
+# ssm-cloudshell.sh: a re-run only adds what is missing (final review, item 7)
+# --------------------------------------------------------------------------
+
+DB_PW = "p" * 44
+# A fake SSM: one file per parameter under <store>/, name with "/" -> "%".
+_FAKE_AWS = r"""
+store="__STORE__"; log="__LOG__"
+op="$2"; name=""; value=""; query=""
+shift 2
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --name) name="$2"; shift 2 ;;
+    --value) value="$2"; shift 2 ;;
+    --query) query="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+f="$store/$(printf '%s' "$name" | tr / %)"
+case "$op" in
+  get-parameter)
+    [ -f "$f" ] || { echo "ParameterNotFound" >&2; exit 254; }
+    [ "$query" = "Parameter.Value" ] && cat "$f"; exit 0 ;;
+  put-parameter) printf '%s' "$value" > "$f"; echo "PUT $name" >> "$log" ;;
+  get-parameters-by-path) : ;;
+esac
+"""
+
+
+@pytest.fixture
+def cloudshell(tmp_path):
+    store = tmp_path / "ssm"
+    store.mkdir()
+    log = tmp_path / "puts.log"
+    log.touch()
+    stubs = tmp_path / "stubs"
+    _stub(
+        stubs,
+        "aws",
+        _FAKE_AWS.replace("__STORE__", _path(store, "-u")).replace(
+            "__LOG__", _path(log, "-u")
+        ),
+    )
+    _stub(stubs, "python3", f'exec "{_path(Path(sys.executable), "-u")}" "$@"')
+
+    def run(*args, answers=("", "", "", "", "")):
+        res = subprocess.run(
+            [
+                BASH,
+                "-c",
+                'PATH="$1:$PATH"; shift; exec bash "$@"',
+                "_",
+                _path(stubs, "-u"),
+                _path(DEPLOY / "ssm-cloudshell.sh", "-m"),
+                *args,
+            ],
+            # bytes, not text=True: Windows would turn each "\n" into "\r\n" and
+            # `read` would keep the "\r".
+            input=("\n".join(answers) + "\n").encode(),
+            capture_output=True,
+            env=ENV,
+        )
+        res.stdout = res.stdout.decode()
+        res.stderr = res.stderr.decode()
+        return res
+
+    def value(name):
+        f = store / name.replace("/", "%")
+        return f.read_text(encoding="utf-8") if f.exists() else None
+
+    def puts():
+        return log.read_text(encoding="utf-8").split("PUT ")[1:]
+
+    return run, value, puts, log, tmp_path
+
+
+@needs_bash
+def test_cloudshell_first_run_writes_everything(cloudshell):
+    run, value, puts, _, tmp = cloudshell
+    pw = _write(tmp / "pw", DB_PW + "\n")
+    res = run(_path(pw, "-m"), answers=("ghtok", "sentrytok", "", ""))
+    assert res.returncode == 0, res.stderr
+    assert value("/fleet/prod/DB_PASSWORD") == DB_PW
+    assert value("/fleet/prod/FLEET_GITHUB_READ_TOKEN") == "ghtok"
+    assert value("/fleet/prod/SECRET_KEY")
+    assert value("/fleet/prod/STATE") == "PROD"
+    assert value("/fleet/prod/SENTRY_DSN") is None
+    assert DB_PW not in res.stdout + res.stderr
+
+
+@needs_bash
+def test_cloudshell_rerun_with_empty_answers_only_adds_what_is_missing(cloudshell):
+    run, value, puts, log, tmp = cloudshell
+    pw = _write(tmp / "pw", DB_PW + "\n")
+    assert run(_path(pw, "-m"), answers=("ghtok", "sentrytok", "", "")).returncode == 0
+    key = value("/fleet/prod/SECRET_KEY")
+    log.write_text("", encoding="utf-8")
+    # No argument: the DB password is prompted; Enter keeps it, as for the tokens.
+    res = run(answers=("", "", "", "https://k@o1.ingest.de.sentry.io/2", ""))
+    assert res.returncode == 0, res.stderr
+    assert [p.strip() for p in puts()] == ["/fleet/prod/SENTRY_DSN"]
+    assert value("/fleet/prod/DB_PASSWORD") == DB_PW
+    assert value("/fleet/prod/FLEET_GITHUB_READ_TOKEN") == "ghtok"
+    assert value("/fleet/prod/SECRET_KEY") == key
+    assert "DB_PASSWORD already exists: kept" in res.stdout
+
+
+@needs_bash
+def test_cloudshell_refuses_an_empty_db_password_on_a_first_run(cloudshell):
+    run, value, puts, _, _ = cloudshell
+    res = run("-")
+    assert res.returncode != 0
+    assert puts() == []
+    assert value("/fleet/prod/DB_PASSWORD") is None
+
+
+@needs_bash
+def test_cloudshell_still_rejects_a_short_password(cloudshell):
+    run, _, puts, _, _ = cloudshell
+    res = run("-", answers=("short", "", "", "", ""))
+    assert res.returncode != 0
+    assert "too short" in res.stderr
+    assert puts() == []
