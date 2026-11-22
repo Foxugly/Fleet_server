@@ -20,7 +20,7 @@
 #   - fleet needs no sudo: root does every restart.
 #
 # What it does, in this order (each step stops the deploy on failure):
-#   1. builds a FRESH /srv/fleet/Fleet_server/.venv.new (python3.12 -m venv), installs
+#   1. builds a FRESH /srv/fleet/Fleet_server/.venv.new (/usr/bin/python3.14 -m venv), installs
 #      the locked dependencies of the NEW bundle into it, pip check;
 #   2. loads the production configuration (/run/fleet/.env) by literal parsing;
 #   3. with .venv.new and the NEW code: check --deploy, THEN migrate.
@@ -76,6 +76,8 @@ OLD="$APP/.bundle-old"
 MANIFEST="$APP/.bundle-manifest"
 VENV_NEW="$APP/.venv.new"
 ENV_FILE=/run/fleet/.env
+# deadsnakes 3.14, root-owned; the system python3 of Ubuntu 24.04 stays 3.12.
+PYTHON=/usr/bin/python3.14
 
 [ "$NEW" = "$APP/.bundle-new" ] || die "bundle dir must be $APP/.bundle-new (got $NEW)"
 [ -d "$NEW" ] && [ ! -L "$NEW" ] || die "$NEW missing (bundle extraction?)"
@@ -104,8 +106,8 @@ trap 'rm -rf "$VENV_NEW"' EXIT
 
 # --- 1. Fresh venv with the NEW lock -----------------------------------------
 rm -rf "$VENV_NEW"
-# Python 3.12 of Ubuntu 24.04, like CI (requirements.txt is locked for 3.12).
-python3.12 -m venv "$VENV_NEW"
+# Python 3.14, like CI (requirements.txt is locked for 3.14).
+"$PYTHON" -m venv "$VENV_NEW"
 # requirements.txt is a hashed lock (uv, from requirements.in): production
 # installs exactly what CI tested. --no-deps: everything is in the lock; pip
 # check verifies it is consistent.

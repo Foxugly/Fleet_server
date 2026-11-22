@@ -201,7 +201,9 @@ def test_privileged_script_restores_the_vhost_when_nginx_t_fails():
 def test_ssm_deploy_script():
     text = _read(DEPLOY / "ssm-deploy.sh")
     assert "set -euo pipefail" in text and "umask 027" in text
-    assert "python3.12 -m venv" in text
+    assert "\nPYTHON=/usr/bin/python3.14\n" in text
+    assert '"$PYTHON" -m venv' in text
+    assert "python3.12" not in text
     assert "--require-hashes --no-deps -r" in text
     assert "pip check" in text
     assert "manage.py migrate --noinput" in text

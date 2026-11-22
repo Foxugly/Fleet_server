@@ -17,8 +17,8 @@ box, dependency locks), Celery beat, read API behind password + TOTP. Fleet-wide
 - Lint: `.venv/Scripts/python.exe -m ruff check .`; migrations: `manage.py makemigrations --check --dry-run`
   (needs `STATE=DEV` in the shell, see `.env` below)
 - Install: `pip install --require-hashes --no-deps -r requirements.txt` then `pip install -r requirements-dev.txt`
-- Lock: `uv pip compile requirements.in --generate-hashes --universal --python-version 3.12 -o requirements.txt`
-  (3.14 is fine locally; CI on 3.12 is the authority)
+- Lock: `uv pip compile requirements.in --generate-hashes --universal --python-version 3.14 -o requirements.txt`
+  (CI and prod run 3.14)
 - Worker + beat locally: `python -m celery -A config worker -B --pool=solo -l info` (solo needed on Windows)
 - Nothing loads `.env`: load it into the shell first (PowerShell snippet in README, Git Bash `set -a; . ./.env; set +a`).
 - First operator: `manage.py create_operator <username>`, TOTP enrolment via the API.
