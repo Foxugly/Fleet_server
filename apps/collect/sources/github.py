@@ -1,5 +1,7 @@
 """GitHub collector: pure function, token passed in, returns a plain dict."""
 
+import json
+
 import requests
 
 from .http import SourceError, get_json, get_json_paginated
@@ -49,8 +51,24 @@ def _check_runs(session, base: str, sha: str) -> list[dict]:
         raise
 
 
-#: 403 bodies meaning "this repo has no scanning", not "you may not read it".
-SCANNING_OFF = ("is not enabled", "advanced security must be enabled")
+#: Starts of GitHub's 403 `message` meaning "this repo has no scanning", not
+#: "you may not read it".
+SCANNING_OFF = (
+    "code scanning is not enabled",
+    "secret scanning is not enabled",
+    "secret scanning is disabled",
+    "advanced security must be enabled",
+)
+
+
+def _scanning_off(exc: SourceError) -> bool:
+    if exc.status != 403:
+        return False
+    try:
+        message = json.loads(exc.body).get("message", "")
+    except (ValueError, AttributeError):
+        return False
+    return isinstance(message, str) and message.lower().startswith(SCANNING_OFF)
 
 
 def _scanning_alerts(session, url: str, params: dict) -> list[dict]:
@@ -62,7 +80,7 @@ def _scanning_alerts(session, url: str, params: dict) -> list[dict]:
     try:
         return get_json_paginated(session, url, params=params, allow_404=True)
     except SourceError as exc:
-        if exc.status == 403 and any(m in exc.body.lower() for m in SCANNING_OFF):
+        if _scanning_off(exc):
             return []
         raise
 

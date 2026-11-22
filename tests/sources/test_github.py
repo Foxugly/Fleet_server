@@ -380,3 +380,23 @@ def test_scanning_permission_403_still_raises():
     )
     with pytest.raises(SourceError):
         collect_repo("Foxugly/x", token="t")
+
+
+@responses.activate
+def test_scanning_off_phrase_elsewhere_in_body_still_raises():
+    """Only GitHub's `message` field, anchored at its start, counts."""
+    path = "/code-scanning/alerts"
+    mock_all(
+        **{
+            path: resp(
+                path,
+                status=403,
+                json={
+                    "message": "Resource not accessible by personal access token",
+                    "note": "code scanning is not enabled",
+                },
+            )
+        }
+    )
+    with pytest.raises(SourceError):
+        collect_repo("Foxugly/x", token="t")
