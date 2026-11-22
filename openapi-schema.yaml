@@ -337,10 +337,15 @@ components:
           nullable: true
         error:
           type: string
+        reason:
+          allOf:
+          - $ref: '#/components/schemas/Reason'
+          nullable: true
       required:
       - collected_at
       - count
       - error
+      - reason
       - state
     Error:
       type: object
@@ -466,6 +471,17 @@ components:
           type: boolean
       required:
       - queued
+    Reason:
+      type: object
+      properties:
+        code:
+          type: string
+        params:
+          type: object
+          additionalProperties: {}
+      required:
+      - code
+      - params
     RefreshRequest:
       type: object
       properties:

@@ -3,11 +3,17 @@ from rest_framework import serializers
 STATES = ["green", "orange", "red", "stale", "error", "none"]
 
 
+class ReasonSerializer(serializers.Serializer):
+    code = serializers.CharField()
+    params = serializers.DictField()
+
+
 class CellSerializer(serializers.Serializer):
     state = serializers.ChoiceField(choices=STATES)
     count = serializers.IntegerField()
     collected_at = serializers.DateTimeField(allow_null=True)
     error = serializers.CharField(allow_blank=True)
+    reason = ReasonSerializer(allow_null=True)
 
 
 class SiteCellsSerializer(serializers.Serializer):
