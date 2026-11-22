@@ -7,6 +7,7 @@ from rest_framework.test import APIClient
 
 from apps.api.updates import group_updates
 from apps.inventory.loader import Site
+from tests.helpers import make_apps
 from tests.test_api import snap
 
 
@@ -513,12 +514,8 @@ sites:
 
 
 @pytest.mark.django_db
-def test_updates_uses_last_good_snapshot(
-    auth_client: APIClient, settings: Any, tmp_path: Any
-) -> None:
-    inv = tmp_path / "inv.yaml"
-    inv.write_text(THREE_SITES, encoding="utf-8")
-    settings.FLEET_INVENTORY_PATH = str(inv)
+def test_updates_uses_last_good_snapshot(auth_client: APIClient) -> None:
+    make_apps(THREE_SITES)
     lock = "Foxugly/alpha:requirements.txt"
     snap("deps", lock, dep("django", "6.0", "6.1", "minor"), age=100)
     snap("deps", lock, ok=False, error="boom", age=10)
@@ -532,12 +529,8 @@ def test_updates_uses_last_good_snapshot(
 
 
 @pytest.mark.django_db
-def test_updates_view_links_prs(
-    auth_client: APIClient, settings: Any, tmp_path: Any
-) -> None:
-    inv = tmp_path / "inv.yaml"
-    inv.write_text(THREE_SITES, encoding="utf-8")
-    settings.FLEET_INVENTORY_PATH = str(inv)
+def test_updates_view_links_prs(auth_client: APIClient) -> None:
+    make_apps(THREE_SITES)
     for s in ("alpha", "beta"):
         snap(
             "deps",
@@ -568,12 +561,8 @@ def test_latest_ok_many() -> None:
 
 
 @pytest.mark.django_db
-def test_updates_view_passes_issues_to_blocked(
-    auth_client: APIClient, settings: Any, tmp_path: Any
-) -> None:
-    inv = tmp_path / "inv.yaml"
-    inv.write_text(THREE_SITES, encoding="utf-8")
-    settings.FLEET_INVENTORY_PATH = str(inv)
+def test_updates_view_passes_issues_to_blocked(auth_client: APIClient) -> None:
+    make_apps(THREE_SITES)
     for s in ("alpha", "beta"):
         snap(
             "deps",

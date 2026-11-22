@@ -5,15 +5,14 @@ from typing import Any
 import pytest
 from rest_framework.test import APIClient
 
+from tests.helpers import make_apps
 from tests.mfa_helpers import enroll, login
 from tests.test_api import CREDS, INVENTORY
 
 
 @pytest.fixture
-def inventory(settings: Any, tmp_path: Any) -> None:
-    path = tmp_path / "fleet.yaml"
-    path.write_text(INVENTORY, encoding="utf-8")
-    settings.FLEET_INVENTORY_PATH = str(path)
+def inventory(db: Any) -> None:
+    make_apps(INVENTORY)
 
 
 @pytest.fixture

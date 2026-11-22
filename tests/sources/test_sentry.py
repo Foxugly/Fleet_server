@@ -117,3 +117,12 @@ def test_session_is_closed(monkeypatch):
     responses.get(URL, json=[_issue(0)])
     sentry.collect_project("proj", token="t", org="org", api=API, now=NOW)
     assert closed == [True]
+
+
+@responses.activate
+def test_project_segment_is_url_quoted():
+    responses.get(f"{API}projects/org/a%2Fb%3Fc/issues/", json=[])
+    sentry.collect_project("a/b?c", token="t", org="org", api=API, now=NOW)
+    assert responses.calls[0].request.url.startswith(
+        f"{API}projects/org/a%2Fb%3Fc/issues/"
+    )

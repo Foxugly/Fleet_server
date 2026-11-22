@@ -60,6 +60,7 @@ class SiteSourcesSerializer(serializers.Serializer):
 
 class SiteDetailSerializer(serializers.Serializer):
     slug = serializers.CharField()
+    archived = serializers.BooleanField()
     repos = serializers.ListField(child=serializers.CharField())
     vhosts = serializers.ListField(child=serializers.CharField())
     deployed = serializers.BooleanField()
@@ -141,3 +142,53 @@ class UpdateGroupSerializer(serializers.Serializer):
 class UpdatesSerializer(serializers.Serializer):
     generated_at = serializers.DateTimeField()
     groups = UpdateGroupSerializer(many=True)
+
+
+class AppOutSerializer(serializers.Serializer):
+    slug = serializers.CharField()
+    repos = serializers.ListField(child=serializers.CharField())
+    vhosts = serializers.ListField(child=serializers.CharField())
+    health_path = serializers.CharField()
+    sentry_projects = serializers.ListField(child=serializers.CharField())
+    python_locks = serializers.ListField(child=serializers.CharField())
+    npm_locks = serializers.ListField(child=serializers.CharField())
+    deployed = serializers.BooleanField()
+    actions_allowed = serializers.BooleanField()
+    archived = serializers.BooleanField()
+    archived_at = serializers.DateTimeField(allow_null=True)
+    created_at = serializers.DateTimeField()
+    updated_at = serializers.DateTimeField()
+
+
+class AppUpdateSerializer(serializers.Serializer):
+    """Documentation of the PUT body; the rules live in `clean_app`."""
+
+    repos = serializers.ListField(child=serializers.CharField(), required=False)
+    vhosts = serializers.ListField(child=serializers.CharField(), required=False)
+    health_path = serializers.CharField(required=False, max_length=200)
+    sentry_projects = serializers.ListField(
+        child=serializers.CharField(), required=False
+    )
+    python_locks = serializers.ListField(child=serializers.CharField(), required=False)
+    npm_locks = serializers.ListField(child=serializers.CharField(), required=False)
+    deployed = serializers.BooleanField()
+    actions_allowed = serializers.BooleanField()
+    totp_code = serializers.CharField()
+
+
+class AppCreateSerializer(AppUpdateSerializer):
+    """Documentation of the POST body: the same plus the (required) slug."""
+
+    slug = serializers.CharField(max_length=64)
+
+
+class TotpOnlySerializer(serializers.Serializer):
+    totp_code = serializers.CharField()
+
+
+class AppChangeSerializer(serializers.Serializer):
+    at = serializers.DateTimeField()
+    user = serializers.CharField(allow_null=True)
+    action = serializers.CharField()
+    before = serializers.JSONField(allow_null=True)
+    after = serializers.JSONField(allow_null=True)

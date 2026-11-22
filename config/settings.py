@@ -205,9 +205,6 @@ FLEET_GITHUB_READ_TOKEN = _env("FLEET_GITHUB_READ_TOKEN")
 FLEET_SENTRY_TOKEN = _env("FLEET_SENTRY_TOKEN")
 FLEET_SENTRY_ORG = _env("FLEET_SENTRY_ORG", "foxugly-srl")
 FLEET_SENTRY_API = _env("FLEET_SENTRY_API", "https://de.sentry.io/api/0/")
-FLEET_INVENTORY_PATH = _env(
-    "FLEET_INVENTORY_PATH", str(BASE_DIR / "inventory" / "fleet.yaml")
-)
 
 REST_FRAMEWORK = {
     # SimpleJWT only: a short-lived access token kept in the SPA's memory, the

@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+from urllib.parse import quote
 
 import requests
 from packaging.version import InvalidVersion, Version
@@ -82,7 +83,7 @@ def collect_lock(ref: str, *, token: str) -> dict:
     try:
         resp = get_response(
             gh,
-            f"{API}/repos/{repo}/contents/{path}",
+            f"{API}/repos/{repo}/contents/{quote(path, safe='/')}",
             params={"ref": "main"},
             allow_404=True,
         )

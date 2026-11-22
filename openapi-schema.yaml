@@ -3,6 +3,170 @@ info:
   title: Fleet API
   version: 1.0.0
 paths:
+  /api/v1/apps/:
+    get:
+      operationId: apps_list
+      description: Every app, archived ones included (see `archived`).
+      tags:
+      - apps
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AppOut'
+          description: ''
+    post:
+      operationId: apps_create
+      description: Create an app. Needs a fresh `totp_code`, checked after validation
+        (a 400 does not spend the code). 403 `totp_invalid` if refused.
+      tags:
+      - apps
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppCreate'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppOut'
+          description: ''
+  /api/v1/apps/{slug}/:
+    get:
+      operationId: apps_retrieve
+      description: One app by slug, archived or not.
+      parameters:
+      - in: path
+        name: slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - apps
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppOut'
+          description: ''
+    put:
+      operationId: apps_update
+      description: 'Replace an app''s fields. The slug is immutable: omit it, or send
+        the same one (else 400). Needs a fresh `totp_code`, checked after validation.'
+      parameters:
+      - in: path
+        name: slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - apps
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppUpdate'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppOut'
+          description: ''
+  /api/v1/apps/{slug}/archive/:
+    post:
+      operationId: apps_archive
+      description: 'Archive an app: it leaves the overview, collection and updates
+        but its page and history stay readable. Needs a fresh `totp_code`.'
+      parameters:
+      - in: path
+        name: slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - apps
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TotpOnly'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppOut'
+          description: ''
+  /api/v1/apps/{slug}/changes/:
+    get:
+      operationId: apps_changes
+      description: The audit trail of one app, newest first.
+      parameters:
+      - in: path
+        name: slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - apps
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AppChange'
+          description: ''
+  /api/v1/apps/{slug}/restore/:
+    post:
+      operationId: apps_restore
+      description: Restore an archived app. Needs a fresh `totp_code`.
+      parameters:
+      - in: path
+        name: slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - apps
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TotpOnly'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppOut'
+          description: ''
   /api/v1/auth/login/:
     post:
       operationId: auth_login
@@ -316,6 +480,162 @@ paths:
           description: ''
 components:
   schemas:
+    AppChange:
+      type: object
+      properties:
+        at:
+          type: string
+          format: date-time
+        user:
+          type: string
+          nullable: true
+        action:
+          type: string
+        before:
+          nullable: true
+        after:
+          nullable: true
+      required:
+      - action
+      - after
+      - at
+      - before
+      - user
+    AppCreate:
+      type: object
+      description: 'Documentation of the POST body: the same plus the (required) slug.'
+      properties:
+        repos:
+          type: array
+          items:
+            type: string
+        vhosts:
+          type: array
+          items:
+            type: string
+        health_path:
+          type: string
+          maxLength: 200
+        sentry_projects:
+          type: array
+          items:
+            type: string
+        python_locks:
+          type: array
+          items:
+            type: string
+        npm_locks:
+          type: array
+          items:
+            type: string
+        deployed:
+          type: boolean
+        actions_allowed:
+          type: boolean
+        totp_code:
+          type: string
+        slug:
+          type: string
+          maxLength: 64
+      required:
+      - actions_allowed
+      - deployed
+      - slug
+      - totp_code
+    AppOut:
+      type: object
+      properties:
+        slug:
+          type: string
+        repos:
+          type: array
+          items:
+            type: string
+        vhosts:
+          type: array
+          items:
+            type: string
+        health_path:
+          type: string
+        sentry_projects:
+          type: array
+          items:
+            type: string
+        python_locks:
+          type: array
+          items:
+            type: string
+        npm_locks:
+          type: array
+          items:
+            type: string
+        deployed:
+          type: boolean
+        actions_allowed:
+          type: boolean
+        archived:
+          type: boolean
+        archived_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+      - actions_allowed
+      - archived
+      - archived_at
+      - created_at
+      - deployed
+      - health_path
+      - npm_locks
+      - python_locks
+      - repos
+      - sentry_projects
+      - slug
+      - updated_at
+      - vhosts
+    AppUpdate:
+      type: object
+      description: Documentation of the PUT body; the rules live in `clean_app`.
+      properties:
+        repos:
+          type: array
+          items:
+            type: string
+        vhosts:
+          type: array
+          items:
+            type: string
+        health_path:
+          type: string
+          maxLength: 200
+        sentry_projects:
+          type: array
+          items:
+            type: string
+        python_locks:
+          type: array
+          items:
+            type: string
+        npm_locks:
+          type: array
+          items:
+            type: string
+        deployed:
+          type: boolean
+        actions_allowed:
+          type: boolean
+        totp_code:
+          type: string
+      required:
+      - actions_allowed
+      - deployed
+      - totp_code
     Box:
       type: object
       properties:
@@ -539,6 +859,8 @@ components:
       properties:
         slug:
           type: string
+        archived:
+          type: boolean
         repos:
           type: array
           items:
@@ -555,6 +877,7 @@ components:
           $ref: '#/components/schemas/SiteSources'
       required:
       - actions_allowed
+      - archived
       - deployed
       - repos
       - slug
@@ -651,6 +974,13 @@ components:
       required:
       - access
       - user
+    TotpOnly:
+      type: object
+      properties:
+        totp_code:
+          type: string
+      required:
+      - totp_code
     UpdateBlocked:
       type: object
       properties:

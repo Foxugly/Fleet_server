@@ -54,7 +54,9 @@ def _github(site: Site, repo: str, now: datetime, index: int, first: bool) -> di
             "created_at": ago(1),
         },
     }
-    if index % 3 == 1:  # a quiet repo stays green
+    # A quiet repo stays green; the deliberate cases never are (the loader orders
+    # by slug, so an index no longer tells which site is which).
+    if index % 3 == 1 and site.slug not in (RED_SITE, "pushit"):
         return data
     data["prs"].append(
         {
