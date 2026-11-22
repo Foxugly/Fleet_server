@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from typing import Any
+
+from packaging.version import InvalidVersion, Version
 
 from apps.collect.sources.deps import _norm
 from apps.inventory.loader import Site
@@ -32,7 +35,78 @@ def _key(ecosystem: str, name: str) -> str:
     return name.lower() if ecosystem == "npm" else _norm(name)
 
 
-def _track(group: dict, prs: dict[str, list[dict]]) -> None:
+_UPDATE = re.compile(
+    r"^[ \t]*fleet-update:[ \t]*(\S+)[ \t]+(\S+)[ \t]*\r?$", re.I | re.M
+)
+_BLOCKER = re.compile(
+    r"^[ \t]*fleet-blocked-by:[ \t]*(\S+)[ \t]+(\S+)[ \t]*\r?$", re.I | re.M
+)
+
+
+def _newer(version: str, candidate: str | None) -> bool:
+    try:
+        return candidate is not None and Version(candidate) > Version(version)
+    except InvalidVersion:
+        return False
+
+
+def _latest_seen(deps: dict[str, dict], package: str) -> str | None:
+    """Highest `latest` listed as outdated for `package` in any lock."""
+    best: str | None = None
+    for data in deps.values():
+        eco = str(data.get("ecosystem") or "")
+        for item in data.get("outdated") or []:
+            latest = item.get("latest")
+            if not item.get("name") or not latest:
+                continue
+            if _key(eco, str(item["name"])) != _key(eco, package):
+                continue
+            if best is None or _newer(best, latest):
+                best = latest
+    return best
+
+
+def _blocked(
+    group: dict, issues: dict[str, list[dict]], deps: dict[str, dict]
+) -> dict | None:
+    eco = group["ecosystem"] or ""
+    want = group["latest"] or "security"
+    pkg = _key(eco, group["package"])
+    repos = dict.fromkeys(m["repo"] for m in group["members"])
+    found: list[dict] = []
+    by: dict[tuple[str, str], None] = {}
+    for repo in repos:
+        for issue in issues.get(repo) or []:
+            body = issue.get("body")
+            if not str(issue.get("title", "")).startswith("[fleet]") or not body:
+                continue
+            if not any(
+                _key(eco, p) == pkg and v == want for p, v in _UPDATE.findall(body)
+            ):
+                continue
+            found.append({"repo": repo, "number": issue["number"], "url": issue["url"]})
+            by.update(dict.fromkeys(_BLOCKER.findall(body)))
+    if not found:
+        return None
+    return {
+        "issues": found,
+        "by": [
+            {
+                "package": p,
+                "version": v,
+                "newer": (n if _newer(v, n := _latest_seen(deps, p)) else None),
+            }
+            for p, v in by
+        ],
+    }
+
+
+def _track(
+    group: dict,
+    prs: dict[str, list[dict]],
+    issues: dict[str, list[dict]],
+    deps: dict[str, dict],
+) -> None:
     """Add `branch`, `prs` and `progress`: the PRs opened on the group's branch."""
     suffix = group["latest"] or "security"
     branch = f"deps/{group['package']}-{suffix}"
@@ -58,7 +132,11 @@ def _track(group: dict, prs: dict[str, list[dict]]) -> None:
         progress = "in_progress"
     else:
         progress = "possible"
-    group.update(branch=branch, prs=found, progress=progress)
+    blocked = _blocked(group, issues, deps)
+    if progress == "none" and blocked:
+        retry = any(b["newer"] for b in blocked["by"])
+        progress = "retry" if retry else "waiting"
+    group.update(branch=branch, prs=found, progress=progress, blocked=blocked)
 
 
 def group_updates(
@@ -66,6 +144,7 @@ def group_updates(
     deps: dict[str, dict],
     alerts: dict[str, list[dict]],
     prs: dict[str, list[dict]] | None = None,
+    issues: dict[str, list[dict]] | None = None,
 ) -> list[dict]:
     site_repos = {s.slug: s.repos for s in sites}
 
@@ -175,7 +254,7 @@ def group_updates(
         return (-rank, -len({m["site"] for m in g["members"]}), g["package"])
 
     for g in groups:
-        _track(g, prs or {})
+        _track(g, prs or {}, issues or {}, deps)
 
     groups.sort(key=order)
     return groups

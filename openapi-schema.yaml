@@ -482,12 +482,16 @@ components:
       - in_progress
       - possible
       - blocked
+      - waiting
+      - retry
       type: string
       description: |-
         * `none` - none
         * `in_progress` - in_progress
         * `possible` - possible
         * `blocked` - blocked
+        * `waiting` - waiting
+        * `retry` - retry
     Queued:
       type: object
       properties:
@@ -647,6 +651,34 @@ components:
       required:
       - access
       - user
+    UpdateBlocked:
+      type: object
+      properties:
+        issues:
+          type: array
+          items:
+            $ref: '#/components/schemas/UpdateIssue'
+        by:
+          type: array
+          items:
+            $ref: '#/components/schemas/UpdateBlocker'
+      required:
+      - by
+      - issues
+    UpdateBlocker:
+      type: object
+      properties:
+        package:
+          type: string
+        version:
+          type: string
+        newer:
+          type: string
+          nullable: true
+      required:
+      - newer
+      - package
+      - version
     UpdateGroup:
       type: object
       properties:
@@ -677,7 +709,12 @@ components:
             $ref: '#/components/schemas/UpdatePr'
         progress:
           $ref: '#/components/schemas/ProgressEnum'
+        blocked:
+          allOf:
+          - $ref: '#/components/schemas/UpdateBlocked'
+          nullable: true
       required:
+      - blocked
       - branch
       - ecosystem
       - kind
@@ -687,6 +724,19 @@ components:
       - progress
       - prs
       - security
+    UpdateIssue:
+      type: object
+      properties:
+        repo:
+          type: string
+        number:
+          type: integer
+        url:
+          type: string
+      required:
+      - number
+      - repo
+      - url
     UpdateMember:
       type: object
       properties:

@@ -130,6 +130,7 @@ def test_alert_only_group() -> None:
             "branch": "deps/pillow-security",
             "prs": [],
             "progress": "none",
+            "blocked": None,
         }
     ]
 
@@ -316,6 +317,85 @@ def test_prs_only_from_member_repos() -> None:
     prs = {"Foxugly/c": [pr(9, "deps/x-2", "success")]}
     g = group_updates(sites, deps, {}, prs)[0]
     assert g["prs"] == [] and g["progress"] == "none"
+
+
+def fleet_issue(number: int, body: str) -> dict:
+    return {
+        "number": number,
+        "title": "[fleet] django 6.1.2 bloque",
+        "url": f"https://x/issues/{number}",
+        "body": body,
+    }
+
+
+def blocked_setup(extra_deps: dict | None = None):
+    sites = [site("a", (A_LOCK,)), site("b", (B_LOCK,))]
+    deps = {A_LOCK: dep("django", "6.0", "6.1.2", "minor"), B_LOCK: multi("x")}
+    deps[B_LOCK] = dep("django", "6.0", "6.1.2", "minor")
+    deps.update(extra_deps or {})
+    return sites, deps
+
+
+BODY = (
+    "Fleet-Update: django 6.1.2\nFleet-Blocked-By: djangorestframework 3.16.1\nraison"
+)
+
+
+def test_waiting_when_blocker_not_outdated() -> None:
+    sites, deps = blocked_setup()
+    issues = {"Foxugly/a": [fleet_issue(8, BODY)]}
+    g = group_updates(sites, deps, {}, {}, issues)[0]
+    assert g["progress"] == "waiting"
+    assert g["blocked"] == {
+        "issues": [{"repo": "Foxugly/a", "number": 8, "url": "https://x/issues/8"}],
+        "by": [{"package": "djangorestframework", "version": "3.16.1", "newer": None}],
+    }
+
+
+def test_retry_when_newer_blocker_exists() -> None:
+    sites, deps = blocked_setup()
+    deps[C_LOCK] = dep("djangorestframework", "3.16.1", "3.17.0", "minor")
+    sites.append(site("c", (C_LOCK,)))
+    issues = {"Foxugly/a": [fleet_issue(8, BODY)]}
+    g = [
+        g
+        for g in group_updates(sites, deps, {}, {}, issues)
+        if g["package"] == "django"
+    ][0]
+    assert g["progress"] == "retry"
+    assert g["blocked"]["by"][0]["newer"] == "3.17.0"
+
+
+def test_parsing_tolerates_crlf_case_and_noise() -> None:
+    sites, deps = blocked_setup()
+    body = (
+        "Bonjour\r\nFLEET-UPDATE: Django 6.1.2\r\n"
+        "fleet-blocked-by: drf 1.0\r\nfleet-blocked-by: drf 1.0\r\nfin"
+    )
+    g = group_updates(sites, deps, {}, {}, {"Foxugly/b": [fleet_issue(1, body)]})[0]
+    assert g["progress"] == "waiting"
+    assert g["blocked"]["by"] == [{"package": "drf", "version": "1.0", "newer": None}]
+
+
+def test_issue_for_other_version_or_non_member_ignored() -> None:
+    sites, deps = blocked_setup()
+    sites.append(site("c", (C_LOCK,)))
+    other = BODY.replace("6.1.2", "6.1.1")
+    issues = {
+        "Foxugly/a": [fleet_issue(1, other)],
+        "Foxugly/c": [fleet_issue(2, BODY)],
+    }
+    g = group_updates(sites, deps, {}, {}, issues)[0]
+    assert g["progress"] == "none" and g["blocked"] is None
+
+
+def test_pr_wins_over_issue() -> None:
+    sites, deps = blocked_setup()
+    issues = {"Foxugly/a": [fleet_issue(8, BODY)]}
+    prs = {"Foxugly/a": [pr(3, "deps/django-6.1.2", "pending")]}
+    g = group_updates(sites, deps, {}, prs, issues)[0]
+    assert g["progress"] == "in_progress"
+    assert g["blocked"] is not None
 
 
 @pytest.mark.django_db

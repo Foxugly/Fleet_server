@@ -401,3 +401,31 @@ def test_scanning_off_phrase_elsewhere_in_body_still_raises():
     )
     with pytest.raises(SourceError):
         collect_repo("Foxugly/x", token="t")
+
+
+@responses.activate
+def test_fleet_issues_keep_body_only():
+    mock_all(
+        **{
+            "/issues": [
+                {
+                    "number": 3,
+                    "title": "A bug",
+                    "html_url": "u3",
+                    "created_at": "2026-10-01T10:00:00Z",
+                    "body": "secret text",
+                },
+                {
+                    "number": 4,
+                    "title": "[fleet] django 6.1.2 bloque",
+                    "html_url": "u4",
+                    "created_at": "2026-10-01T10:00:00Z",
+                    "body": "Fleet-Update: django 6.1.2" + chr(10) + "x" * 3000,
+                },
+            ]
+        }
+    )
+    issues = collect_repo("Foxugly/x", token="t")["issues"]
+    assert "body" not in issues[0]
+    assert issues[1]["body"].startswith("Fleet-Update: django 6.1.2")
+    assert len(issues[1]["body"]) == 2000

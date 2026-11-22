@@ -99,6 +99,23 @@ class UpdatePrSerializer(serializers.Serializer):
     checks = serializers.CharField()
 
 
+class UpdateIssueSerializer(serializers.Serializer):
+    repo = serializers.CharField()
+    number = serializers.IntegerField()
+    url = serializers.CharField()
+
+
+class UpdateBlockerSerializer(serializers.Serializer):
+    package = serializers.CharField()
+    version = serializers.CharField()
+    newer = serializers.CharField(allow_null=True)
+
+
+class UpdateBlockedSerializer(serializers.Serializer):
+    issues = UpdateIssueSerializer(many=True)
+    by = UpdateBlockerSerializer(many=True)
+
+
 class UpdateGroupSerializer(serializers.Serializer):
     ecosystem = serializers.CharField(allow_null=True)
     package = serializers.CharField()
@@ -109,8 +126,16 @@ class UpdateGroupSerializer(serializers.Serializer):
     branch = serializers.CharField()
     prs = UpdatePrSerializer(many=True)
     progress = serializers.ChoiceField(
-        choices=["none", "in_progress", "possible", "blocked"]
+        choices=[
+            "none",
+            "in_progress",
+            "possible",
+            "blocked",
+            "waiting",
+            "retry",
+        ]
     )
+    blocked = UpdateBlockedSerializer(allow_null=True)
 
 
 class UpdatesSerializer(serializers.Serializer):

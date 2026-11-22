@@ -171,6 +171,18 @@ def _main_run(session, base: str) -> dict | None:
     }
 
 
+def _issue(i: dict) -> dict:
+    out = {
+        "number": i["number"],
+        "title": i["title"],
+        "url": i["html_url"],
+        "created_at": i["created_at"],
+    }
+    if str(i["title"]).startswith("[fleet]"):
+        out["body"] = (i.get("body") or "")[:2000]
+    return out
+
+
 def collect_repo(repo: str, *, token: str) -> dict:
     session = _session(token)
     base = f"{API}/repos/{repo}"
@@ -178,12 +190,7 @@ def collect_repo(repo: str, *, token: str) -> dict:
 
     prs = _prs(session, base)
     issues = [
-        {
-            "number": i["number"],
-            "title": i["title"],
-            "url": i["html_url"],
-            "created_at": i["created_at"],
-        }
+        _issue(i)
         for i in get_json_paginated(session, f"{base}/issues", params=open_params)
         if "pull_request" not in i
     ]

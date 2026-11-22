@@ -93,10 +93,11 @@ class UpdatesView(APIView):
         github = store.latest_ok_many("github", repos)
         alerts = {k: v.data.get("dependabot_alerts") or [] for k, v in github.items()}
         prs = {k: v.data.get("prs") or [] for k, v in github.items()}
+        issues = {k: v.data.get("issues") or [] for k, v in github.items()}
         return Response(
             {
                 "generated_at": timezone.now().isoformat(),
-                "groups": group_updates(sites, deps, alerts, prs),
+                "groups": group_updates(sites, deps, alerts, prs, issues),
             }
         )
 
