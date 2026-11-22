@@ -111,15 +111,16 @@ def test_create_writes_row_and_audit(client: APIClient, apps_db: None, code) -> 
     assert resp.status_code == 201, resp.content
     assert resp.json()["slug"] == "new-app" and resp.json()["archived"] is False
     assert App.objects.get(slug="new-app").as_dict() == _body()
+    audited = {**_body(), "archived": False}
     change = InventoryChange.objects.get()
     assert (change.action, change.app_slug) == ("create", "new-app")
-    assert change.before is None and change.after == _body()
+    assert change.before is None and change.after == audited
     assert change.user.username == "fleet-admin"
 
 
 @pytest.mark.django_db
 def test_update_writes_row_and_audit(client: APIClient, apps_db: None, code) -> None:
-    before = App.objects.get(slug="alpha").as_dict()
+    before = App.objects.get(slug="alpha").audit_dict()
     new = _body(
         slug="alpha",
         repos=["Foxugly/alpha"],
@@ -131,12 +132,14 @@ def test_update_writes_row_and_audit(client: APIClient, apps_db: None, code) -> 
     assert App.objects.get(slug="alpha").as_dict() == new
     change = InventoryChange.objects.get()
     assert change.action == "update"
-    assert change.before == before and change.after == new
+    assert change.before == before and change.after == {**new, "archived": False}
 
 
 @pytest.mark.django_db
 def test_archive_then_restore(client: APIClient, apps_db: None, code) -> None:
     fields = App.objects.get(slug="alpha").as_dict()
+    active = {**fields, "archived": False}
+    gone = {**fields, "archived": True}
     resp = _post(client, f"{URL}alpha/archive/", code())
     assert resp.status_code == 200 and resp.json()["archived"] is True
     assert App.objects.get(slug="alpha").archived_at is not None
@@ -145,8 +148,8 @@ def test_archive_then_restore(client: APIClient, apps_db: None, code) -> None:
     assert App.objects.get(slug="alpha").archived_at is None
     rows = InventoryChange.objects.order_by("id")
     assert [(c.action, c.before, c.after) for c in rows] == [
-        ("archive", fields, fields),
-        ("restore", fields, fields),
+        ("archive", active, gone),
+        ("restore", gone, active),
     ]
 
 
@@ -326,3 +329,35 @@ def test_writes_are_throttled(client: APIClient, apps_db: None) -> None:
     ]
     assert statuses[0] == 403 and statuses[-1] == 429
     assert InventoryChange.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_slug_race_on_create_is_a_400(
+    client: APIClient, apps_db: None, code, monkeypatch
+) -> None:
+    # Two creates pass the pre-check, the database refuses the second one.
+    class _Never:
+        def exists(self) -> bool:
+            return False
+
+    real = App.objects.filter
+    monkeypatch.setattr(
+        App.objects,
+        "filter",
+        lambda *a, **k: _Never() if k.get("slug") == "alpha" else real(*a, **k),
+    )
+    resp = _post(client, URL, code(), **_body(slug="alpha"))
+    assert resp.status_code == 400 and "slug" in resp.json()
+    monkeypatch.undo()
+    assert App.objects.filter(slug="alpha").count() == 1
+    assert InventoryChange.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_write_bodies_are_json_only(client: APIClient, apps_db: None, code) -> None:
+    resp = client.post(
+        URL,
+        f"slug=x&totp_code={code()}",
+        content_type="application/x-www-form-urlencoded",
+    )
+    assert resp.status_code == 415

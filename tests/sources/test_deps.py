@@ -151,3 +151,11 @@ def test_lock_with_no_pins_is_an_error():
     responses.get(GH + "requirements.txt", body="# only comments" + chr(10))
     with pytest.raises(SourceError, match="no pins parsed: Foxugly/x:requirements.txt"):
         collect_lock("Foxugly/x:requirements.txt", token="t")
+
+
+@responses.activate
+def test_lock_path_is_url_quoted():
+    responses.get(GH + "my%20dir/requirements.txt", status=404)
+    with pytest.raises(SourceError):
+        collect_lock("Foxugly/x:my dir/requirements.txt", token="t")
+    assert responses.calls[0].request.url.startswith(GH + "my%20dir/requirements.txt")

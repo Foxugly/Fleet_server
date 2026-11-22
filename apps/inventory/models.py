@@ -47,6 +47,10 @@ class App(models.Model):
             actions_allowed=self.actions_allowed,
         )
 
+    def audit_dict(self) -> dict[str, Any]:
+        """Editable fields plus the archive flag: what the audit trail records."""
+        return {**self.as_dict(), "archived": self.archived}
+
     def as_dict(self) -> dict[str, Any]:
         """The editable fields only (audit before/after)."""
         return {f: getattr(self, f) for f in EDITABLE_FIELDS}

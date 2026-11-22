@@ -198,9 +198,37 @@ def test_clean_app_accepts_and_defaults():
         ({"actions_allowed": None}, "actions_allowed"),
         ({"repos": "Foxugly/A"}, "repos"),
         ({"sentry_projects": [1]}, "sentry_projects"),
+        ({"slug": "alpha\n"}, "slug"),
+        ({"repos": ["Foxugly/A\n"]}, "repos"),
+        ({"vhosts": ["a.foxugly.com\n"]}, "vhosts"),
+        ({"python_locks": ["Foxugly/A:requirements.txt\n"]}, "python_locks"),
+        ({"python_locks": ["Foxugly/A:/etc/passwd"]}, "python_locks"),
+        ({"python_locks": ["Foxugly/A:../x/requirements.txt"]}, "python_locks"),
+        ({"python_locks": ["Foxugly/A:a/./b.txt"]}, "python_locks"),
+        ({"python_locks": ["Foxugly/A:a//b.txt"]}, "python_locks"),
+        ({"npm_locks": ["Foxugly/A:a b/package-lock.json"]}, "npm_locks"),
+        ({"npm_locks": ["Foxugly/A:a?x=1"]}, "npm_locks"),
+        ({"sentry_projects": ["Upper"]}, "sentry_projects"),
+        ({"sentry_projects": ["a/b"]}, "sentry_projects"),
+        ({"sentry_projects": ["a?b"]}, "sentry_projects"),
+        ({"sentry_projects": ["a" * 101]}, "sentry_projects"),
+        ({"sentry_projects": ["ok\n"]}, "sentry_projects"),
+        ({"health_path": "/h?x=1"}, "health_path"),
+        ({"health_path": "/h#x"}, "health_path"),
+        ({"health_path": "/h%2e"}, "health_path"),
+        ({"health_path": "/h h"}, "health_path"),
+        ({"health_path": "/../x"}, "health_path"),
+        ({"health_path": "/a/./b"}, "health_path"),
+        ({"health_path": "/health\n"}, "health_path"),
     ],
 )
 def test_clean_app_rules(over, field):
     with pytest.raises(ValidationError) as exc:
         clean_app(_valid(**over))
     assert field in exc.value.detail
+
+
+def test_imported_values_pass_the_current_rules():
+    # The 17 apps of migration 0002 must still be valid under today's rules.
+    for raw in yaml.safe_load(SNAPSHOT.read_text(encoding="utf-8"))["sites"]:
+        assert clean_app(raw)["slug"] == raw["slug"]

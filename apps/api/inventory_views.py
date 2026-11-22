@@ -10,6 +10,7 @@ from django.utils import timezone
 from drf_spectacular.utils import extend_schema
 from rest_framework import status as http
 from rest_framework.exceptions import ValidationError
+from rest_framework.parsers import JSONParser
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
@@ -21,8 +22,9 @@ from apps.inventory.validation import clean_app
 
 from .serializers import (
     AppChangeSerializer,
-    AppInSerializer,
+    AppCreateSerializer,
     AppOutSerializer,
+    AppUpdateSerializer,
     TotpOnlySerializer,
 )
 
@@ -64,8 +66,8 @@ def _audit(request: Request, slug: str, action: str, before: Any, after: Any) ->
 
 
 class _WriteThrottled(APIView):
-    """Reads keep the default throttles; writes also use the MFA scope (5/min)."""
-
+    # Reads keep the default throttles; writes also use the `mfa` scope.
+    parser_classes = [JSONParser]
     throttle_scope = "mfa"
 
     def get_throttles(self) -> list[Any]:
@@ -76,13 +78,21 @@ class _WriteThrottled(APIView):
 
 
 class AppsView(_WriteThrottled):
-    @extend_schema(operation_id="apps_list", responses=AppOutSerializer(many=True))
+    @extend_schema(
+        operation_id="apps_list",
+        description="Every app, archived ones included (see `archived`).",
+        responses=AppOutSerializer(many=True),
+    )
     def get(self, request: Request) -> Response:
         return Response([_out(a) for a in App.objects.all()])
 
     @extend_schema(
         operation_id="apps_create",
-        request=AppInSerializer,
+        description=(
+            "Create an app. Needs a fresh `totp_code`, checked after validation "
+            "(a 400 does not spend the code). 403 `totp_invalid` if refused."
+        ),
+        request=AppCreateSerializer,
         responses={201: AppOutSerializer},
     )
     def post(self, request: Request) -> Response:
@@ -96,20 +106,29 @@ class AppsView(_WriteThrottled):
         try:
             with transaction.atomic():
                 app = App.objects.create(**fields)
-                _audit(request, app.slug, ACTION.CREATE, None, app.as_dict())
+                _audit(request, app.slug, ACTION.CREATE, None, app.audit_dict())
         except IntegrityError:
             raise ValidationError({"slug": ["This slug already exists."]}) from None
         return Response(_out(app), status=http.HTTP_201_CREATED)
 
 
 class AppDetailView(_WriteThrottled):
-    @extend_schema(operation_id="apps_retrieve", responses=AppOutSerializer)
+    @extend_schema(
+        operation_id="apps_retrieve",
+        description="One app by slug, archived or not.",
+        responses=AppOutSerializer,
+    )
     def get(self, request: Request, slug: str) -> Response:
         return Response(_out(_get_app(slug)))
 
     @extend_schema(
         operation_id="apps_update",
-        request=AppInSerializer,
+        description=(
+            "Replace an app's fields. The slug is immutable: omit it, or send the "
+            "same one (else 400). Needs a fresh `totp_code`, checked after "
+            "validation."
+        ),
+        request=AppUpdateSerializer,
         responses={200: AppOutSerializer},
     )
     def put(self, request: Request, slug: str) -> Response:
@@ -122,11 +141,11 @@ class AppDetailView(_WriteThrottled):
             return _totp_refused()
         with transaction.atomic():
             app = _get_app(slug, lock=True)
-            before = app.as_dict()
+            before = app.audit_dict()
             for key, value in fields.items():
                 setattr(app, key, value)
             app.save()
-            _audit(request, slug, ACTION.UPDATE, before, app.as_dict())
+            _audit(request, slug, ACTION.UPDATE, before, app.audit_dict())
         return Response(_out(app))
 
 
@@ -145,11 +164,11 @@ class _ArchiveToggle(_WriteThrottled):
         with transaction.atomic():
             app = _get_app(slug, lock=True)
             self._check_state(app)  # re-checked under the row lock
+            before = app.audit_dict()
             app.archived_at = timezone.now() if self.archive else None
             app.save()
-            fields = app.as_dict()
             action = ACTION.ARCHIVE if self.archive else ACTION.RESTORE
-            _audit(request, slug, action, fields, fields)
+            _audit(request, slug, action, before, app.audit_dict())
         return Response(_out(app))
 
 
@@ -158,6 +177,10 @@ class AppArchiveView(_ArchiveToggle):
 
     @extend_schema(
         operation_id="apps_archive",
+        description=(
+            "Archive an app: it leaves the overview, collection and updates but "
+            "its page and history stay readable. Needs a fresh `totp_code`."
+        ),
         request=TotpOnlySerializer,
         responses={200: AppOutSerializer},
     )
@@ -170,6 +193,7 @@ class AppRestoreView(_ArchiveToggle):
 
     @extend_schema(
         operation_id="apps_restore",
+        description="Restore an archived app. Needs a fresh `totp_code`.",
         request=TotpOnlySerializer,
         responses={200: AppOutSerializer},
     )
@@ -179,7 +203,9 @@ class AppRestoreView(_ArchiveToggle):
 
 class AppChangesView(APIView):
     @extend_schema(
-        operation_id="apps_changes", responses=AppChangeSerializer(many=True)
+        operation_id="apps_changes",
+        description="The audit trail of one app, newest first.",
+        responses=AppChangeSerializer(many=True),
     )
     def get(self, request: Request, slug: str) -> Response:
         _get_app(slug)

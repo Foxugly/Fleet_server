@@ -160,10 +160,9 @@ class AppOutSerializer(serializers.Serializer):
     updated_at = serializers.DateTimeField()
 
 
-class AppInSerializer(serializers.Serializer):
-    """Documentation of the write body; the rules live in `clean_app`."""
+class AppUpdateSerializer(serializers.Serializer):
+    """Documentation of the PUT body; the rules live in `clean_app`."""
 
-    slug = serializers.CharField(required=False, max_length=64)
     repos = serializers.ListField(child=serializers.CharField(), required=False)
     vhosts = serializers.ListField(child=serializers.CharField(), required=False)
     health_path = serializers.CharField(required=False, max_length=200)
@@ -175,6 +174,12 @@ class AppInSerializer(serializers.Serializer):
     deployed = serializers.BooleanField()
     actions_allowed = serializers.BooleanField()
     totp_code = serializers.CharField()
+
+
+class AppCreateSerializer(AppUpdateSerializer):
+    """Documentation of the POST body: the same plus the (required) slug."""
+
+    slug = serializers.CharField(max_length=64)
 
 
 class TotpOnlySerializer(serializers.Serializer):

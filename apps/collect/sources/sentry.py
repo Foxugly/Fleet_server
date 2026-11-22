@@ -1,6 +1,7 @@
 """Sentry collector: pure function, token passed in, returns a plain dict."""
 
 from datetime import UTC, datetime, timedelta
+from urllib.parse import quote
 
 import requests
 
@@ -31,7 +32,7 @@ def collect_project(
     project: str, *, token: str, org: str, api: str, now: datetime | None = None
 ) -> dict:
     now = now or datetime.now(UTC)
-    url = f"{api.rstrip('/')}/projects/{org}/{project}/issues/"
+    url = f"{api.rstrip('/')}/projects/{org}/{quote(project, safe='')}/issues/"
     try:
         with _session(token) as session:
             raw = get_json_paginated(
