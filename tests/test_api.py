@@ -74,10 +74,10 @@ def test_overview_requires_auth(api_user: Any) -> None:
 
 
 @pytest.mark.django_db
-def test_overview_red_first(client: APIClient, inventory: None) -> None:
+def test_overview_red_first(auth_client: APIClient, inventory: None) -> None:
     snap("health", "alpha.example.com", GOOD_HEALTH)
     snap("health", "beta.example.com", {**GOOD_HEALTH, "status": 500})
-    body = client.get("/api/v1/overview/").json()
+    body = auth_client.get("/api/v1/overview/").json()
     assert body["sites"][0]["slug"] == "beta"
     assert body["sites"][0]["cells"]["health"]["state"] == "red"
     assert body["box"]["box"]["state"] == "stale"
@@ -142,46 +142,46 @@ def test_box_rules() -> None:
 
 
 @pytest.mark.django_db
-def test_site_detail_and_404(client: APIClient, inventory: None) -> None:
+def test_site_detail_and_404(auth_client: APIClient, inventory: None) -> None:
     snap("health", "alpha.example.com", GOOD_HEALTH)
-    body = client.get("/api/v1/sites/alpha/").json()
+    body = auth_client.get("/api/v1/sites/alpha/").json()
     item = body["sources"]["health"]["items"]["alpha.example.com"]
     assert item["data"]["status"] == 200 and item["ok"] is True
     assert body["sources"]["sentry"]["cell"]["state"] == "none"
-    assert client.get("/api/v1/sites/nope/").status_code == 404
+    assert auth_client.get("/api/v1/sites/nope/").status_code == 404
 
 
 @pytest.mark.django_db
-def test_box_endpoint(client: APIClient) -> None:
-    body = client.get("/api/v1/box/").json()
+def test_box_endpoint(auth_client: APIClient) -> None:
+    body = auth_client.get("/api/v1/box/").json()
     assert body["cell"]["state"] == "stale" and body["data"] is None
 
 
 @pytest.mark.django_db
-def test_refresh_queues(client: APIClient, monkeypatch: Any) -> None:
+def test_refresh_queues(auth_client: APIClient, monkeypatch: Any) -> None:
     called: list[str] = []
     monkeypatch.setattr(tasks.collect_health, "delay", lambda: called.append("h"))
-    resp = client.post("/api/v1/refresh/health/")
+    resp = auth_client.post("/api/v1/refresh/health/")
     assert resp.status_code == 202 and resp.json() == {"queued": "health"}
     assert called == ["h"]
 
 
 @pytest.mark.django_db
-def test_refresh_unknown_source_404(client: APIClient) -> None:
-    assert client.post("/api/v1/refresh/nope/").status_code == 404
+def test_refresh_unknown_source_404(auth_client: APIClient) -> None:
+    assert auth_client.post("/api/v1/refresh/nope/").status_code == 404
 
 
 @pytest.mark.django_db
-def test_refresh_is_throttled(client: APIClient, monkeypatch: Any) -> None:
+def test_refresh_is_throttled(auth_client: APIClient, monkeypatch: Any) -> None:
     monkeypatch.setattr(tasks.collect_box_task, "delay", lambda: None)
-    codes = [client.post("/api/v1/refresh/box/").status_code for _ in range(7)]
+    codes = [auth_client.post("/api/v1/refresh/box/").status_code for _ in range(7)]
     assert codes[:6] == [202] * 6 and codes[6] == 429
 
 
 @pytest.mark.django_db
-def test_schema_served(client: APIClient) -> None:
+def test_schema_served(auth_client: APIClient) -> None:
     assert APIClient().get("/api/v1/schema/").status_code == 401
-    resp = client.get("/api/v1/schema/?format=json")
+    resp = auth_client.get("/api/v1/schema/?format=json")
     assert resp.status_code == 200
     schema = resp.json()
     assert schema["info"]["title"] == "Fleet API"
@@ -234,13 +234,13 @@ def test_red_cell_count_is_at_least_one() -> None:
 
 
 @pytest.mark.django_db
-def test_refresh_dedupes_per_source(client: APIClient, monkeypatch: Any) -> None:
+def test_refresh_dedupes_per_source(auth_client: APIClient, monkeypatch: Any) -> None:
     called: list[str] = []
     monkeypatch.setattr(tasks.collect_github, "delay", lambda: called.append("g"))
     monkeypatch.setattr(tasks.collect_sentry, "delay", lambda: called.append("s"))
-    first = client.post("/api/v1/refresh/github/")
-    second = client.post("/api/v1/refresh/github/")
-    other = client.post("/api/v1/refresh/sentry/")
+    first = auth_client.post("/api/v1/refresh/github/")
+    second = auth_client.post("/api/v1/refresh/github/")
+    other = auth_client.post("/api/v1/refresh/sentry/")
     assert first.json() == {"queued": "github"}
     assert second.status_code == 202
     assert second.json() == {"queued": "github", "already_queued": True}
@@ -250,7 +250,7 @@ def test_refresh_dedupes_per_source(client: APIClient, monkeypatch: Any) -> None
 
 @pytest.mark.django_db
 def test_refresh_failed_delay_releases_dedupe_key(
-    client: APIClient, monkeypatch: Any
+    auth_client: APIClient, monkeypatch: Any
 ) -> None:
     from django.core.cache import cache
 
@@ -261,11 +261,11 @@ def test_refresh_failed_delay_releases_dedupe_key(
         raise ConnectionError("broker down")
 
     monkeypatch.setattr(tasks.collect_deps, "delay", broker_down)
-    client.raise_request_exception = False
-    first = client.post("/api/v1/refresh/deps/")
+    auth_client.raise_request_exception = False
+    first = auth_client.post("/api/v1/refresh/deps/")
     assert first.status_code == 500
     assert cache.get("refresh:deps") is None
     monkeypatch.setattr(tasks.collect_deps, "delay", lambda: calls.append(2))
-    second = client.post("/api/v1/refresh/deps/")
+    second = auth_client.post("/api/v1/refresh/deps/")
     assert second.json() == {"queued": "deps"}
     assert calls == [1, 2]

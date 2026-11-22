@@ -124,9 +124,9 @@ def test_updates_reason_counts_packages_not_cell_count() -> None:
 
 
 @pytest.mark.django_db
-def test_overview_payload_has_reason(client: APIClient, inventory: None) -> None:
+def test_overview_payload_has_reason(auth_client: APIClient, inventory: None) -> None:
     snap("health", "alpha.example.com", {**GOOD_HEALTH, "status": 500})
-    body = client.get("/api/v1/overview/").json()
+    body = auth_client.get("/api/v1/overview/").json()
     cells = [c for s in body["sites"] for c in s["cells"].values()]
     cells.append(body["box"]["box"])
     assert cells and all("reason" in c for c in cells)

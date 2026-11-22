@@ -17,7 +17,7 @@ def inventory(settings: Any, tmp_path: Any) -> None:
 
 
 @pytest.fixture
-def client(api_user: Any) -> APIClient:
+def auth_client(api_user: Any) -> APIClient:
     c = APIClient()
     resp = login(c, CREDS, enroll(api_user))
     c.credentials(HTTP_AUTHORIZATION=f"Bearer {resp.json()['access']}")
