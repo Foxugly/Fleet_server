@@ -13,6 +13,8 @@ from apps.inventory.loader import Site, get_site, load_inventory
 from apps.inventory.models import App
 from apps.inventory.validation import clean_app
 from tests.helpers import make_apps
+from tests.test_api import snap
+from tests.test_updates import dep
 
 SNAPSHOT = Path(__file__).parent / "data" / "fleet_import_snapshot.yaml"
 
@@ -105,15 +107,40 @@ def test_app_as_dict_and_to_site_round_trip():
 def test_archived_app_is_excluded(auth_client: APIClient, inventory: None) -> None:
     # Review Focus 2: archived apps leave the loader and the overview, but the
     # site page still answers, marked archived.
-    App.objects.filter(slug="beta").update(archived_at=timezone.now())
-    assert [s.slug for s in load_inventory()] == ["alpha"]
+    App.objects.filter(slug="beta").update(
+        archived_at=timezone.now(), python_locks=["Foxugly/beta:requirements.txt"]
+    )
+    # History written while the app was active stays readable once archived.
+    snap("health", "beta.example.com", {"status": 200})
+    lock = "Foxugly/beta:requirements.txt"
+    snap("deps", lock, dep("django", "6.0", "6.1", "minor"))
+    App.objects.create(
+        slug="gamma",
+        repos=["Foxugly/gamma"],
+        python_locks=["Foxugly/gamma:requirements.txt"],
+        deployed=True,
+    )
+    for other in ("alpha", "gamma"):
+        snap(
+            "deps",
+            f"Foxugly/{other}:requirements.txt",
+            dep("django", "6.0", "6.1", "minor"),
+        )
+    assert [s.slug for s in load_inventory()] == ["alpha", "gamma"]
     assert get_site("beta") is None
     slugs = [s["slug"] for s in auth_client.get("/api/v1/overview/").json()["sites"]]
-    assert slugs == ["alpha"]
-    assert auth_client.get("/api/v1/updates/").status_code == 200
+    assert sorted(slugs) == ["alpha", "gamma"]
+    updates = auth_client.get("/api/v1/updates/")
+    assert updates.status_code == 200
+    members = [m["site"] for g in updates.json()["groups"] for m in g["members"]]
+    assert members == ["alpha", "gamma"]
     resp = auth_client.get("/api/v1/sites/beta/")
     assert resp.status_code == 200
     assert resp.json()["archived"] is True
+    sources = resp.json()["sources"]
+    assert "beta.example.com" in sources["health"]["items"]
+    assert sources["health"]["items"]["beta.example.com"]["data"]["status"] == 200
+    assert lock in sources["deps"]["items"]
     assert auth_client.get("/api/v1/sites/alpha/").json()["archived"] is False
     assert auth_client.get("/api/v1/sites/nope/").status_code == 404
 

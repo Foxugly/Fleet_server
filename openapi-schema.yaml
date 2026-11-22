@@ -3,6 +3,196 @@ info:
   title: Fleet API
   version: 1.0.0
 paths:
+  /api/v1/apps/:
+    get:
+      operationId: apps_list
+      description: Reads keep the default throttles; writes also use the MFA scope
+        (5/min).
+      tags:
+      - apps
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AppOut'
+          description: ''
+    post:
+      operationId: apps_create
+      description: Reads keep the default throttles; writes also use the MFA scope
+        (5/min).
+      tags:
+      - apps
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppIn'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AppIn'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AppIn'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppOut'
+          description: ''
+  /api/v1/apps/{slug}/:
+    get:
+      operationId: apps_retrieve
+      description: Reads keep the default throttles; writes also use the MFA scope
+        (5/min).
+      parameters:
+      - in: path
+        name: slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - apps
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppOut'
+          description: ''
+    put:
+      operationId: apps_update
+      description: Reads keep the default throttles; writes also use the MFA scope
+        (5/min).
+      parameters:
+      - in: path
+        name: slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - apps
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppIn'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AppIn'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AppIn'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppOut'
+          description: ''
+  /api/v1/apps/{slug}/archive/:
+    post:
+      operationId: apps_archive
+      description: Reads keep the default throttles; writes also use the MFA scope
+        (5/min).
+      parameters:
+      - in: path
+        name: slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - apps
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TotpOnly'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TotpOnly'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TotpOnly'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppOut'
+          description: ''
+  /api/v1/apps/{slug}/changes/:
+    get:
+      operationId: apps_changes
+      parameters:
+      - in: path
+        name: slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - apps
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AppChange'
+          description: ''
+  /api/v1/apps/{slug}/restore/:
+    post:
+      operationId: apps_restore
+      description: Reads keep the default throttles; writes also use the MFA scope
+        (5/min).
+      parameters:
+      - in: path
+        name: slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - apps
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TotpOnly'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TotpOnly'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TotpOnly'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppOut'
+          description: ''
   /api/v1/auth/login/:
     post:
       operationId: auth_login
@@ -316,6 +506,124 @@ paths:
           description: ''
 components:
   schemas:
+    AppChange:
+      type: object
+      properties:
+        at:
+          type: string
+          format: date-time
+        user:
+          type: string
+          nullable: true
+        action:
+          type: string
+        before:
+          nullable: true
+        after:
+          nullable: true
+      required:
+      - action
+      - after
+      - at
+      - before
+      - user
+    AppIn:
+      type: object
+      description: Documentation of the write body; the rules live in `clean_app`.
+      properties:
+        slug:
+          type: string
+          maxLength: 64
+        repos:
+          type: array
+          items:
+            type: string
+        vhosts:
+          type: array
+          items:
+            type: string
+        health_path:
+          type: string
+          maxLength: 200
+        sentry_projects:
+          type: array
+          items:
+            type: string
+        python_locks:
+          type: array
+          items:
+            type: string
+        npm_locks:
+          type: array
+          items:
+            type: string
+        deployed:
+          type: boolean
+        actions_allowed:
+          type: boolean
+        totp_code:
+          type: string
+      required:
+      - actions_allowed
+      - deployed
+      - totp_code
+    AppOut:
+      type: object
+      properties:
+        slug:
+          type: string
+        repos:
+          type: array
+          items:
+            type: string
+        vhosts:
+          type: array
+          items:
+            type: string
+        health_path:
+          type: string
+        sentry_projects:
+          type: array
+          items:
+            type: string
+        python_locks:
+          type: array
+          items:
+            type: string
+        npm_locks:
+          type: array
+          items:
+            type: string
+        deployed:
+          type: boolean
+        actions_allowed:
+          type: boolean
+        archived:
+          type: boolean
+        archived_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+      - actions_allowed
+      - archived
+      - archived_at
+      - created_at
+      - deployed
+      - health_path
+      - npm_locks
+      - python_locks
+      - repos
+      - sentry_projects
+      - slug
+      - updated_at
+      - vhosts
     Box:
       type: object
       properties:
@@ -654,6 +962,13 @@ components:
       required:
       - access
       - user
+    TotpOnly:
+      type: object
+      properties:
+        totp_code:
+          type: string
+      required:
+      - totp_code
     UpdateBlocked:
       type: object
       properties:

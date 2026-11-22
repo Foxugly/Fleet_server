@@ -1,3 +1,4 @@
+# Frozen test data: the YAML as imported by migration 0002. The live inventory is in the database.
 # Fleet inventory. Lock entries use 'Foxugly/Repo:path'.
 sites:
   - slug: quizonline
