@@ -49,6 +49,24 @@ def _check_runs(session, base: str, sha: str) -> list[dict]:
         raise
 
 
+#: 403 bodies meaning "this repo has no scanning", not "you may not read it".
+SCANNING_OFF = ("is not enabled", "advanced security must be enabled")
+
+
+def _scanning_alerts(session, url: str, params: dict) -> list[dict]:
+    """Code/secret scanning alerts; [] when scanning is off for the repo.
+
+    Scanning off answers 404 on public repos but 403 on private ones; only a 403
+    whose body says so is tolerated (a permission or rate-limit 403 still fails).
+    """
+    try:
+        return get_json_paginated(session, url, params=params, allow_404=True)
+    except SourceError as exc:
+        if exc.status == 403 and any(m in exc.body.lower() for m in SCANNING_OFF):
+            return []
+        raise
+
+
 def _checks(session, base: str, sha: str) -> str:
     runs = _check_runs(session, base, sha)
     statuses = get_json(session, f"{base}/commits/{sha}/status", params=PER_PAGE)[
@@ -171,17 +189,12 @@ def collect_repo(repo: str, *, token: str) -> dict:
             ),
             "url": a["html_url"],
         }
-        for a in get_json_paginated(
-            session, f"{base}/code-scanning/alerts", params=open_params, allow_404=True
-        )
+        for a in _scanning_alerts(session, f"{base}/code-scanning/alerts", open_params)
     ]
     secret_scanning = [
         {"type": a["secret_type"], "url": a["html_url"]}
-        for a in get_json_paginated(
-            session,
-            f"{base}/secret-scanning/alerts",
-            params=open_params,
-            allow_404=True,
+        for a in _scanning_alerts(
+            session, f"{base}/secret-scanning/alerts", open_params
         )
     ]
     return {
