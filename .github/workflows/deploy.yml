@@ -141,7 +141,8 @@ jobs:
           #   5. as fleet: ssm-deploy.sh, read from root's mirror into a root-owned
           #      0644 file (never from the bundle or the app tree): fresh venv,
           #      check --deploy, migrate, swap;
-          #   6. as root: restart the three units, local /health/ loop;
+          #   6. as root: restart the three units, local /health/ loop, then
+          #      celery and beat still active 5 s later;
           #   7. permissions: chown -R -h (follows no link) as root, chmod as fleet.
           # Single-quoted entries reach the box verbatim ($M, $T... expand there).
           cmds=(
@@ -170,6 +171,8 @@ jobs:
             'ok=0'
             "for i in \$(seq 1 30); do if curl -fsS --max-time 5 -o /dev/null -H 'Host: fleet-api.foxugly.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8014/health/; then ok=1; break; fi; sleep 2; done"
             "[ \"\$ok\" = 1 ] || { echo 'ERROR: fleet-app-gunicorn not healthy on 127.0.0.1:8014 after 60 s' >&2; journalctl -u fleet-app-gunicorn -n 50 --no-pager >&2 || true; exit 1; }"
+            'sleep 5'
+            "systemctl is-active --quiet fleet-app-celery fleet-app-celery-beat || { echo 'ERROR: fleet-app-celery or fleet-app-celery-beat is not active' >&2; journalctl -u fleet-app-celery -u fleet-app-celery-beat -n 50 --no-pager >&2 || true; exit 1; }"
             'chown -R -h fleet:fleet "$A"'
             'sudo -u fleet chmod -R g-w,o-rwx "$A"'
             'rm -rf "$T" "$S"'

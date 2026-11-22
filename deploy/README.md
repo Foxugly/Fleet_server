@@ -42,7 +42,8 @@ A push to `main` runs CI, then `.github/workflows/deploy.yml` (OIDC role `fleet-
    Units run `.venv/bin/python -m gunicorn` / `-m celery`: a renamed venv keeps stale
    console-script shebangs, so nothing calls `.venv/bin/<script>`.
 5. Root restarts `fleet-app-gunicorn fleet-app-celery fleet-app-celery-beat`, checks
-   `/health/` locally, then CI checks `https://fleet-api.foxugly.com/health/` returns the SHA.
+   `/health/` locally and, 5 s later, that the worker and beat are still active (their journal
+   otherwise), then CI checks `https://fleet-api.foxugly.com/health/` returns the SHA.
 
 Root never runs anything from `/srv/fleet/Fleet_server` and installs nothing from it
 (OPERATIONS.md §3.10/§3.11). `fleet` has no sudo grant: root does every restart.

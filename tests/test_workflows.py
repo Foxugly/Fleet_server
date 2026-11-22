@@ -446,6 +446,8 @@ def test_ssm_command_list_runs_the_deploy_in_order(tmp_path):
         'sudo -u fleet bash "$S" /srv/fleet/Fleet_server/.bundle-new "$SHA"',
         "systemctl restart fleet-app-gunicorn fleet-app-celery fleet-app-celery-beat",
         "-H 'Host: fleet-api.foxugly.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8014/health/",
+        "sleep 5",
+        "systemctl is-active --quiet fleet-app-celery fleet-app-celery-beat",
         'chown -R -h fleet:fleet "$A"',
         'sudo -u fleet chmod -R g-w,o-rwx "$A"',
         'rm -rf "$T" "$S"',
@@ -555,6 +557,60 @@ def test_send_command_has_a_delivery_timeout(tmp_path):
     assert res.returncode == 0, res.stderr
     args = log.read_text(encoding="utf-8").splitlines()
     assert args[args.index("--timeout-seconds") + 1] == "120"
+
+
+def _celery_check(params: dict) -> str:
+    (check,) = [c for c in params["commands"] if "systemctl is-active" in c]
+    return check
+
+
+@needs_bash
+@pytest.mark.parametrize(("active", "code"), [(True, 0), (False, 1)])
+def test_ssm_fails_when_celery_is_not_active(tmp_path, active, code):
+    """After the health loop: a worker or beat that died at start fails the
+    deploy, with their journal; the check runs under a POSIX sh (dash)."""
+    _, _, params = _ssm_params(tmp_path)
+    check = _celery_check(params)
+    stubs = tmp_path / "box-stubs"
+    log = tmp_path / "box.log"
+    _stub(
+        stubs,
+        "systemctl",
+        f'echo "systemctl $*" >> "{_posix(log)}"\n'
+        + ("exit 0" if active else "exit 3"),
+    )
+    _stub(stubs, "journalctl", f'echo "journalctl $*" >> "{_posix(log)}"')
+    script = tmp_path / "check.sh"
+    script.write_text("set -eu\n" + check + "\n", encoding="utf-8", newline="\n")
+    res = subprocess.run(
+        [
+            BASH,
+            "--noprofile",
+            "--norc",
+            "-c",
+            'PATH="$1:$PATH"; shift; exec bash --posix "$@"',
+            "_",
+            _posix(stubs),
+            _posix(script),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == code, res.stderr
+    calls = log.read_text(encoding="utf-8")
+    assert "systemctl is-active --quiet fleet-app-celery fleet-app-celery-beat" in calls
+    journal = (
+        "journalctl -u fleet-app-celery -u fleet-app-celery-beat -n 50 --no-pager"
+    )
+    assert (journal in calls) is (not active)
+
+
+@needs_bash
+def test_ssm_waits_before_checking_celery(tmp_path):
+    _, _, params = _ssm_params(tmp_path)
+    cmds = params["commands"]
+    i = cmds.index(_celery_check(params))
+    assert cmds[i - 1] == "sleep 5"
 
 
 @needs_bash
