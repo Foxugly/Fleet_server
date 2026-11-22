@@ -138,3 +138,15 @@ def test_token_never_in_recorded_error(settings, monkeypatch):
     errors = list(Snapshot.objects.values_list("error", flat=True))
     assert len(errors) == 2
     assert all("s3cret-token-value" not in e for e in errors)
+
+
+@pytest.mark.django_db
+def test_fallback_error_message_is_truncated_to_200_chars(monkeypatch):
+    def fake(repo, *, token):
+        raise ValueError("x" * 1000)
+
+    monkeypatch.setattr(tasks.github, "collect_repo", fake)
+    tasks.collect_github()
+    snap = store.latest("github", "Foxugly/B")
+    assert snap.error.startswith("ValueError: xxx")
+    assert len(snap.error) == 200

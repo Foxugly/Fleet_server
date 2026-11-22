@@ -26,6 +26,17 @@ def _env_list(name: str, default: str = "") -> list[str]:
     return [item.strip() for item in _env(name, default).split(",") if item.strip()]
 
 
+def _read_release(base_dir: Path) -> str:
+    """Deployed version: the `RELEASE` file CI writes into the bundle, else `dev`."""
+    try:
+        return (base_dir / "RELEASE").read_text(encoding="utf-8").strip() or "dev"
+    except OSError:
+        return "dev"
+
+
+#: Version shown by `/health/` and the default Sentry release.
+RELEASE = _read_release(BASE_DIR)
+
 #: Fleet env selector (OPERATIONS.md §3.14): `PROD` or `DEV`, no default. A
 #: prod box whose env failed to load must refuse to start, not boot in DEV
 #: with DEBUG on.
@@ -109,7 +120,8 @@ if _db_engine in {"postgresql", "postgres"}:
             "PASSWORD": os.environ.get("DB_PASSWORD", ""),
             "HOST": _env("DB_HOST", "127.0.0.1"),
             "PORT": _env("DB_PORT", "5432"),
-            "CONN_MAX_AGE": int(_env("DB_CONN_MAX_AGE", "60")),
+            # 0 by default: only the gunicorn unit sets DB_CONN_MAX_AGE (never Celery).
+            "CONN_MAX_AGE": int(_env("DB_CONN_MAX_AGE", "0")),
         }
     }
 else:
@@ -255,9 +267,14 @@ SIMPLE_JWT = {
 }
 
 # Origins allowed to use the cookie mode (checked server-side on `Origin`).
-CORS_ALLOWED_ORIGINS = _env_list(
-    "CORS_ALLOWED_ORIGINS", "http://127.0.0.1:4200,http://localhost:4200"
-)
+if STATE == "PROD":
+    CORS_ALLOWED_ORIGINS = _env_list("CORS_ALLOWED_ORIGINS")
+    if not CORS_ALLOWED_ORIGINS:
+        raise ImproperlyConfigured("CORS_ALLOWED_ORIGINS must be set when STATE=PROD")
+else:
+    CORS_ALLOWED_ORIGINS = _env_list(
+        "CORS_ALLOWED_ORIGINS", "http://127.0.0.1:4200,http://localhost:4200"
+    )
 if "*" in CORS_ALLOWED_ORIGINS:
     raise ImproperlyConfigured("CORS_ALLOWED_ORIGINS must list explicit origins")
 # The SPA sends the HttpOnly refresh cookie and the cookie-mode opt-in header.
@@ -287,8 +304,8 @@ FLEET_MFA_ISSUER = "Fleet"
 if not DEBUG:
     SECURE_SSL_REDIRECT = True
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
-    SECURE_HSTS_SECONDS = 31_536_000
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    # HSTS is sent by nginx only (OPERATIONS.md §3.25).
+    SECURE_HSTS_SECONDS = 0
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
@@ -318,6 +335,6 @@ if SENTRY_DSN and (STATE == "PROD" or _env_bool("SENTRY_ENABLE", False)):
     init_sentry(
         dsn=SENTRY_DSN,
         environment=_env("SENTRY_ENVIRONMENT", STATE),
-        release=_env("SENTRY_RELEASE") or None,
+        release=_env("SENTRY_RELEASE") or RELEASE,
         traces_sample_rate=float(_env("SENTRY_TRACES_SAMPLE_RATE", "0")),
     )

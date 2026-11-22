@@ -1,0 +1,43 @@
+# Fleet: gunicorn (WSGI) on 127.0.0.1:8014, behind nginx (fleet-api.foxugly.com).
+# Installed by the deploy (fleet-deploy-privileged.sh) from root's mirror.
+[Unit]
+Description=Fleet: gunicorn (127.0.0.1:8014)
+After=network.target fleet-app-env-fetch.service postgresql.service redis-server.service
+# Wants=, not Requires=: restarting env-fetch (secret rotation) must not stop
+# the app, nor leave it stopped if the fetch fails. EnvironmentFile= (no `-`)
+# still refuses to start without /run/fleet/.env.
+Wants=fleet-app-env-fetch.service
+
+[Service]
+Type=simple
+# Dedicated user, not django: not in www-data, cannot read other sites' .env.
+User=fleet
+Group=fleet
+UMask=0027
+WorkingDirectory=/srv/fleet/Fleet_server
+EnvironmentFile=/run/fleet/.env
+Environment="PYTHONUNBUFFERED=1"
+# Persistent connections: gunicorn only (OPERATIONS.md §3.22); Celery and one-off
+# commands keep the settings default 0.
+Environment="DB_CONN_MAX_AGE=60"
+# `python -m gunicorn`, not .venv/bin/gunicorn: each deploy builds .venv.new and
+# renames it to .venv, and console-script shebangs keep the old path.
+ExecStart=/srv/fleet/Fleet_server/.venv/bin/python -m gunicorn --no-control-socket --workers 2 --timeout 60 \
+    --bind 127.0.0.1:8014 \
+    config.wsgi:application
+# Hardening (OPERATIONS.md §3.22). Never ProtectSystem=strict on an app unit.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+MemoryMax=512M
+Restart=always
+RestartSec=5
+KillMode=mixed
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

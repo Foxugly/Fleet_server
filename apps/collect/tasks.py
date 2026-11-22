@@ -35,7 +35,7 @@ def _run(source: str, subjects: list[str], fn: Callable[[str], dict]) -> None:
             raise
         except Exception as exc:  # noqa: BLE001 - isolate every subject
             logger.exception("collect %s failed for %s", source, subject)
-            store.record(source, subject, error=f"{type(exc).__name__}: {exc}")
+            store.record(source, subject, error=f"{type(exc).__name__}: {exc}"[:200])
         else:
             store.record(source, subject, data=data)
 

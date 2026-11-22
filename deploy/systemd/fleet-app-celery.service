@@ -1,0 +1,37 @@
+# Fleet: Celery worker (collectors, purge, on-demand refresh).
+# Installed by the deploy (fleet-deploy-privileged.sh) from root's mirror.
+[Unit]
+Description=Fleet: Celery worker
+After=network.target fleet-app-env-fetch.service postgresql.service redis-server.service
+# Wants=, not Requires=: restarting env-fetch (secret rotation) must not stop
+# the app, nor leave it stopped if the fetch fails. EnvironmentFile= (no `-`)
+# still refuses to start without /run/fleet/.env.
+Wants=fleet-app-env-fetch.service
+
+[Service]
+Type=simple
+User=fleet
+Group=fleet
+UMask=0027
+WorkingDirectory=/srv/fleet/Fleet_server
+EnvironmentFile=/run/fleet/.env
+Environment="PYTHONUNBUFFERED=1"
+# prefork, 2 children, not solo: a collector may run up to 600 s
+# (CELERY_TASK_TIME_LIMIT) and must not hold back the health checks (plan 3, D3).
+# No DB_CONN_MAX_AGE here: the settings default 0 applies (OPERATIONS.md §3.22).
+ExecStart=/srv/fleet/Fleet_server/.venv/bin/python -m celery -A config worker -l info --pool=prefork --concurrency=2
+# Hardening (OPERATIONS.md §3.22). Never ProtectSystem=strict on an app unit.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+Restart=always
+RestartSec=5
+KillMode=mixed
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

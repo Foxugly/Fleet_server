@@ -18,7 +18,9 @@ PROBE = (
     "print(json.dumps({'debug': s.DEBUG, 'key': s.SECRET_KEY, "
     "'hosts': s.ALLOWED_HOSTS, 'cache': c.get('BACKEND', ''), "
     "'prefix': c.get('KEY_PREFIX', ''), 'location': c.get('LOCATION', ''), "
-    "'apps': s.INSTALLED_APPS}))"
+    "'apps': s.INSTALLED_APPS, 'hsts': getattr(s, 'SECURE_HSTS_SECONDS', None), "
+    "'conn_max_age': s.DATABASES['default'].get('CONN_MAX_AGE'), "
+    "'proxies': s.REST_FRAMEWORK['NUM_PROXIES'], 'release': s.RELEASE}))"
 )
 
 _CLEARED = (
@@ -29,6 +31,8 @@ _CLEARED = (
     "REDIS_URL",
     "SENTRY_DSN",
     "DB_ENGINE",
+    "DB_CONN_MAX_AGE",
+    "CORS_ALLOWED_ORIGINS",
 )
 
 
@@ -98,6 +102,7 @@ def test_prod_ignores_debug_true_and_has_no_testserver():
         SECRET_KEY="x" * 50,
         ALLOWED_HOSTS="fleet.example.com",
         REDIS_URL="redis://r/12",
+        CORS_ALLOWED_ORIGINS="https://fleet.example.com",
     )
     assert out["debug"] is False
     assert out["hosts"] == ["fleet.example.com"]
@@ -127,3 +132,36 @@ def test_admin_app_not_installed():
 def test_prod_requires_redis_url_for_the_shared_throttle_cache():
     err = _fails(STATE="PROD", SECRET_KEY="x" * 50, ALLOWED_HOSTS="fleet.example.com")
     assert "REDIS_URL must be set when STATE=PROD" in err
+
+
+_PROD = {
+    "STATE": "PROD",
+    "SECRET_KEY": "x" * 50,
+    "ALLOWED_HOSTS": "fleet.example.com",
+    "REDIS_URL": "redis://r/12",
+    "CORS_ALLOWED_ORIGINS": "https://fleet.example.com",
+}
+
+
+def test_prod_requires_cors_allowed_origins():
+    env = {k: v for k, v in _PROD.items() if k != "CORS_ALLOWED_ORIGINS"}
+    assert "CORS_ALLOWED_ORIGINS must be set when STATE=PROD" in _fails(**env)
+
+
+def test_prod_hsts_is_left_to_nginx():
+    assert _ok(**_PROD)["hsts"] == 0
+
+
+def test_db_conn_max_age_defaults_to_zero_and_is_overridable():
+    assert _ok(DB_ENGINE="postgresql")["conn_max_age"] == 0
+    assert _ok(DB_ENGINE="postgresql", DB_CONN_MAX_AGE="60")["conn_max_age"] == 60
+
+
+def test_throttle_trusts_exactly_one_proxy():
+    assert _ok()["proxies"] == 1
+
+
+def test_release_matches_the_release_file_or_dev():
+    release_file = ROOT / "RELEASE"
+    expected = release_file.read_text().strip() if release_file.exists() else "dev"
+    assert _ok()["release"] == (expected or "dev")
