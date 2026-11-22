@@ -325,13 +325,16 @@ def fleet_issue(number: int, body: str) -> dict:
         "title": "[fleet] django 6.1.2 bloque",
         "url": f"https://x/issues/{number}",
         "body": body,
+        "author_association": "OWNER",
     }
 
 
 def blocked_setup(extra_deps: dict | None = None):
     sites = [site("a", (A_LOCK,)), site("b", (B_LOCK,))]
-    deps = {A_LOCK: dep("django", "6.0", "6.1.2", "minor"), B_LOCK: multi("x")}
-    deps[B_LOCK] = dep("django", "6.0", "6.1.2", "minor")
+    deps = {
+        A_LOCK: dep("django", "6.0", "6.1.2", "minor"),
+        B_LOCK: dep("django", "6.0", "6.1.2", "minor"),
+    }
     deps.update(extra_deps or {})
     return sites, deps
 
@@ -396,6 +399,92 @@ def test_pr_wins_over_issue() -> None:
     g = group_updates(sites, deps, {}, prs, issues)[0]
     assert g["progress"] == "in_progress"
     assert g["blocked"] is not None
+
+
+def run_blocked(body: str, extra: dict | None = None, issue_repo: str = "Foxugly/a"):
+    sites, deps = blocked_setup()
+    if extra:
+        sites.append(site("c", (C_LOCK,)))
+        deps[C_LOCK] = {
+            "ecosystem": "python",
+            "checked": 1,
+            "outdated": extra["outdated"],
+        }
+    issues = {issue_repo: [fleet_issue(8, body)]}
+    groups = group_updates(sites, deps, {}, {}, issues)
+    return [g for g in groups if g["package"] == "django"][0]
+
+
+def outdated(*pairs: tuple[str, str]) -> dict:
+    return {
+        "outdated": [
+            {"name": n, "current": "0", "latest": v, "kind": "minor"} for n, v in pairs
+        ]
+    }
+
+
+def test_issue_without_blocked_by_is_ignored() -> None:
+    g = run_blocked("Fleet-Update: django 6.1.2\nraison")
+    assert g["progress"] == "none" and g["blocked"] is None
+
+
+def test_malformed_blocked_by_is_ignored() -> None:
+    g = run_blocked("Fleet-Update: django 6.1.2\nFleet-Blocked-By: drf")
+    assert g["progress"] == "none" and g["blocked"] is None
+
+
+def test_retry_only_for_blocker_with_newer() -> None:
+    body = (
+        "Fleet-Update: django 6.1.2\n"
+        "Fleet-Blocked-By: drf 3.16.1\n"
+        "Fleet-Blocked-By: celery 5.0.0\n"
+    )
+    g = run_blocked(body, outdated(("drf", "3.17.0"), ("celery", "5.0.0")))
+    assert g["progress"] == "retry"
+    assert {b["package"]: b["newer"] for b in g["blocked"]["by"]} == {
+        "drf": "3.17.0",
+        "celery": None,
+    }
+
+
+def test_newer_equal_or_lower_is_waiting() -> None:
+    body = "Fleet-Update: django 6.1.2\nFleet-Blocked-By: drf 3.16.1\n"
+    for latest in ("3.16.1", "3.15.0"):
+        g = run_blocked(body, outdated(("drf", latest)))
+        assert g["progress"] == "waiting"
+        assert g["blocked"]["by"][0]["newer"] is None
+
+
+def test_unparseable_and_prerelease_versions_are_skipped() -> None:
+    body = "Fleet-Update: django 6.1.2\nFleet-Blocked-By: drf 3.16.1\n"
+    g = run_blocked(body, outdated(("drf", "not-a-version"), ("drf", "4.0.0rc1")))
+    assert g["progress"] == "waiting"
+    g = run_blocked(
+        body,
+        outdated(("drf", "not-a-version"), ("drf", "4.0.0rc1"), ("drf", "3.17.0")),
+    )
+    assert g["blocked"]["by"][0]["newer"] == "3.17.0"
+
+
+def test_alert_only_group_matched_by_security() -> None:
+    sites = [site("a", (A_LOCK,)), site("b", (B_LOCK,))]
+    alerts = {
+        "Foxugly/a": [{"package": "pillow", "severity": "high"}],
+        "Foxugly/b": [{"package": "pillow", "severity": "high"}],
+    }
+    body = "Fleet-Update: Pillow security\nFleet-Blocked-By: foo 1.0\n"
+    issues = {"Foxugly/b": [fleet_issue(4, body)]}
+    g = group_updates(sites, {}, alerts, {}, issues)[0]
+    assert g["latest"] is None
+    assert g["progress"] == "waiting"
+    assert g["blocked"]["issues"][0]["number"] == 4
+
+
+def test_non_fleet_issue_is_not_blocking() -> None:
+    sites, deps = blocked_setup()
+    issue = {**fleet_issue(8, BODY), "title": "Bug"}
+    g = group_updates(sites, deps, {}, {}, {"Foxugly/a": [issue]})[0]
+    assert g["blocked"] is None
 
 
 @pytest.mark.django_db
@@ -476,3 +565,69 @@ def test_latest_ok_many() -> None:
     assert set(got) == {"a", "b"}
     assert got["a"].data == {"v": 1}
     assert got["b"].id == newest.id
+
+
+@pytest.mark.django_db
+def test_updates_view_passes_issues_to_blocked(
+    auth_client: APIClient, settings: Any, tmp_path: Any
+) -> None:
+    inv = tmp_path / "inv.yaml"
+    inv.write_text(THREE_SITES, encoding="utf-8")
+    settings.FLEET_INVENTORY_PATH = str(inv)
+    for s in ("alpha", "beta"):
+        snap(
+            "deps",
+            f"Foxugly/{s}:requirements.txt",
+            dep("django", "6.0", "6.1", "minor"),
+        )
+    body = "Fleet-Update: django 6.1\nFleet-Blocked-By: drf 1.0\n"
+    snap("github", "Foxugly/beta", {"issues": [fleet_issue(12, body)]})
+    g = auth_client.get("/api/v1/updates/").json()["groups"][0]
+    assert g["progress"] == "waiting"
+    assert g["blocked"]["issues"][0]["number"] == 12
+
+
+def test_untrusted_issue_author_is_ignored() -> None:
+    sites, deps = blocked_setup()
+    for assoc in ("NONE", "CONTRIBUTOR", None):
+        issue = {**fleet_issue(8, BODY), "author_association": assoc}
+        g = group_updates(sites, deps, {}, {}, {"Foxugly/a": [issue]})[0]
+        assert g["blocked"] is None and g["progress"] == "none"
+    for assoc in ("OWNER", "MEMBER", "COLLABORATOR"):
+        issue = {**fleet_issue(8, BODY), "author_association": assoc}
+        g = group_updates(sites, deps, {}, {}, {"Foxugly/a": [issue]})[0]
+        assert g["progress"] == "waiting"
+
+
+def test_issue_without_association_in_old_snapshot_is_ignored() -> None:
+    sites, deps = blocked_setup()
+    issue = fleet_issue(8, BODY)
+    del issue["author_association"]
+    g = group_updates(sites, deps, {}, {}, {"Foxugly/a": [issue]})[0]
+    assert g["blocked"] is None
+
+
+def test_newer_ignores_other_ecosystem() -> None:
+    body = "Fleet-Update: django 6.1.2\nFleet-Blocked-By: drf 3.16.1\n"
+    sites, deps = blocked_setup()
+    sites.append(site("c", (NPM_A,)))
+    deps[NPM_A] = dep("drf", "3.0", "9.9.9", "major", eco="npm")
+    issues = {"Foxugly/a": [fleet_issue(8, body)]}
+    groups = group_updates(sites, deps, {}, {}, issues)
+    g = [g for g in groups if g["package"] == "django"][0]
+    assert g["progress"] == "waiting"
+    assert g["blocked"]["by"][0]["newer"] is None
+
+
+def test_malformed_tokens_are_dropped() -> None:
+    body = (
+        "Fleet-Update: django 6.1.2\n"
+        "Fleet-Blocked-By: <script> 1.0\n"
+        "Fleet-Blocked-By: drf 1.0<b>\n"
+        "Fleet-Blocked-By: ok-pkg 1.0\n"
+    )
+    g = run_blocked(body)
+    assert [b["package"] for b in g["blocked"]["by"]] == ["ok-pkg"]
+    only_bad = "Fleet-Update: django 6.1.2\nFleet-Blocked-By: <script> 1.0\n"
+    g = run_blocked(only_bad)
+    assert g["blocked"] is None

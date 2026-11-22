@@ -414,12 +414,14 @@ def test_fleet_issues_keep_body_only():
                     "html_url": "u3",
                     "created_at": "2026-10-01T10:00:00Z",
                     "body": "secret text",
+                    "author_association": "OWNER",
                 },
                 {
                     "number": 4,
                     "title": "[fleet] django 6.1.2 bloque",
                     "html_url": "u4",
                     "created_at": "2026-10-01T10:00:00Z",
+                    "author_association": "COLLABORATOR",
                     "body": "Fleet-Update: django 6.1.2" + chr(10) + "x" * 3000,
                 },
             ]
@@ -429,3 +431,24 @@ def test_fleet_issues_keep_body_only():
     assert "body" not in issues[0]
     assert issues[1]["body"].startswith("Fleet-Update: django 6.1.2")
     assert len(issues[1]["body"]) == 2000
+
+
+@responses.activate
+def test_fleet_issue_body_dropped_for_untrusted_author():
+    mock_all(
+        **{
+            "/issues": [
+                {
+                    "number": 4,
+                    "title": "[fleet] django 6.1.2 bloque",
+                    "html_url": "u4",
+                    "created_at": "2026-10-01T10:00:00Z",
+                    "author_association": "NONE",
+                    "body": "Fleet-Update: django 6.1.2",
+                }
+            ]
+        }
+    )
+    issue = collect_repo("Foxugly/x", token="t")["issues"][0]
+    assert "body" not in issue
+    assert issue["author_association"] == "NONE"

@@ -171,14 +171,22 @@ def _main_run(session, base: str) -> dict | None:
     }
 
 
+#: Who may mark an update blocked: repos are public, so anyone can open an issue.
+TRUSTED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
+
+
 def _issue(i: dict) -> dict:
     out = {
         "number": i["number"],
         "title": i["title"],
         "url": i["html_url"],
         "created_at": i["created_at"],
+        "author_association": i.get("author_association"),
     }
-    if str(i["title"]).startswith("[fleet]"):
+    if (
+        str(i["title"]).startswith("[fleet]")
+        and i.get("author_association") in TRUSTED_ASSOCIATIONS
+    ):
         out["body"] = (i.get("body") or "")[:2000]
     return out
 

@@ -9,6 +9,7 @@ from typing import Any
 from packaging.version import InvalidVersion, Version
 
 from apps.collect.sources.deps import _norm
+from apps.collect.sources.github import TRUSTED_ASSOCIATIONS
 from apps.inventory.loader import Site
 
 KIND_RANK = {"unknown": 0, "patch": 1, "minor": 2, "major": 3}
@@ -43,6 +44,15 @@ _BLOCKER = re.compile(
 )
 
 
+_PKG_OK = re.compile(r"^[A-Za-z0-9@][A-Za-z0-9._@/+-]{0,213}$")
+_VER_OK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+!-]{0,63}$")
+
+
+def _valid(pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Issue bodies are untrusted text: keep only well-formed tokens."""
+    return [(p, v) for p, v in pairs if _PKG_OK.match(p) and _VER_OK.match(v)]
+
+
 def _newer(version: str, candidate: str | None) -> bool:
     try:
         return candidate is not None and Version(candidate) > Version(version)
@@ -50,20 +60,31 @@ def _newer(version: str, candidate: str | None) -> bool:
         return False
 
 
-def _latest_seen(deps: dict[str, dict], package: str) -> str | None:
-    """Highest `latest` listed as outdated for `package` in any lock."""
-    best: str | None = None
+def _latest_seen(
+    deps: dict[str, dict], package: str, ecosystem: str | None
+) -> str | None:
+    """Highest stable `latest` outdated for `package`, in locks of `ecosystem`
+    (every lock when the ecosystem is unknown)."""
+    best: tuple[Version, str] | None = None
     for data in deps.values():
         eco = str(data.get("ecosystem") or "")
+        if ecosystem and eco != ecosystem:
+            continue
         for item in data.get("outdated") or []:
             latest = item.get("latest")
             if not item.get("name") or not latest:
                 continue
             if _key(eco, str(item["name"])) != _key(eco, package):
                 continue
-            if best is None or _newer(best, latest):
-                best = latest
-    return best
+            try:
+                parsed = Version(str(latest))
+            except InvalidVersion:
+                continue
+            if parsed.is_prerelease:
+                continue
+            if best is None or parsed > best[0]:
+                best = (parsed, str(latest))
+    return best[1] if best else None
 
 
 def _blocked(
@@ -78,14 +99,20 @@ def _blocked(
     for repo in repos:
         for issue in issues.get(repo) or []:
             body = issue.get("body")
+            if issue.get("author_association") not in TRUSTED_ASSOCIATIONS:
+                continue
             if not str(issue.get("title", "")).startswith("[fleet]") or not body:
                 continue
             if not any(
-                _key(eco, p) == pkg and v == want for p, v in _UPDATE.findall(body)
+                _key(eco, p) == pkg and v == want
+                for p, v in _valid(_UPDATE.findall(body))
             ):
                 continue
+            blockers = _valid(_BLOCKER.findall(body))
+            if not blockers:  # nothing to wait for: not a blocking issue
+                continue
             found.append({"repo": repo, "number": issue["number"], "url": issue["url"]})
-            by.update(dict.fromkeys(_BLOCKER.findall(body)))
+            by.update(dict.fromkeys(blockers))
     if not found:
         return None
     return {
@@ -94,7 +121,11 @@ def _blocked(
             {
                 "package": p,
                 "version": v,
-                "newer": (n if _newer(v, n := _latest_seen(deps, p)) else None),
+                "newer": (
+                    n
+                    if _newer(v, n := _latest_seen(deps, p, group["ecosystem"]))
+                    else None
+                ),
             }
             for p, v in by
         ],
