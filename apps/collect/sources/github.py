@@ -128,6 +128,7 @@ def _prs(session, base: str) -> list[dict]:
                 "author": login,
                 "is_dependabot": login == "dependabot[bot]",
                 "draft": bool(pr.get("draft")),
+                "branch": pr["head"]["ref"],
                 "checks": _checks(session, base, pr["head"]["sha"]),
                 "merge_state": detail.get("mergeable_state", "unknown"),
                 "created_at": pr["created_at"],
@@ -170,6 +171,26 @@ def _main_run(session, base: str) -> dict | None:
     }
 
 
+#: Who may mark an update blocked: repos are public, so anyone can open an issue.
+TRUSTED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
+
+
+def _issue(i: dict) -> dict:
+    out = {
+        "number": i["number"],
+        "title": i["title"],
+        "url": i["html_url"],
+        "created_at": i["created_at"],
+        "author_association": i.get("author_association"),
+    }
+    if (
+        str(i["title"]).startswith("[fleet]")
+        and i.get("author_association") in TRUSTED_ASSOCIATIONS
+    ):
+        out["body"] = (i.get("body") or "")[:2000]
+    return out
+
+
 def collect_repo(repo: str, *, token: str) -> dict:
     session = _session(token)
     base = f"{API}/repos/{repo}"
@@ -177,12 +198,7 @@ def collect_repo(repo: str, *, token: str) -> dict:
 
     prs = _prs(session, base)
     issues = [
-        {
-            "number": i["number"],
-            "title": i["title"],
-            "url": i["html_url"],
-            "created_at": i["created_at"],
-        }
+        _issue(i)
         for i in get_json_paginated(session, f"{base}/issues", params=open_params)
         if "pull_request" not in i
     ]

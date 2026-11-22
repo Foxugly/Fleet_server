@@ -300,6 +300,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/SiteDetail'
           description: ''
+  /api/v1/updates/:
+    get:
+      operationId: updates_retrieve
+      tags:
+      - updates
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Updates'
+          description: ''
 components:
   schemas:
     Box:
@@ -462,6 +476,22 @@ components:
       - cells
       - deployed
       - slug
+    ProgressEnum:
+      enum:
+      - none
+      - in_progress
+      - possible
+      - blocked
+      - waiting
+      - retry
+      type: string
+      description: |-
+        * `none` - none
+        * `in_progress` - in_progress
+        * `possible` - possible
+        * `blocked` - blocked
+        * `waiting` - waiting
+        * `retry` - retry
     Queued:
       type: object
       properties:
@@ -621,6 +651,150 @@ components:
       required:
       - access
       - user
+    UpdateBlocked:
+      type: object
+      properties:
+        issues:
+          type: array
+          items:
+            $ref: '#/components/schemas/UpdateIssue'
+        by:
+          type: array
+          items:
+            $ref: '#/components/schemas/UpdateBlocker'
+      required:
+      - by
+      - issues
+    UpdateBlocker:
+      type: object
+      properties:
+        package:
+          type: string
+        version:
+          type: string
+        newer:
+          type: string
+          nullable: true
+      required:
+      - newer
+      - package
+      - version
+    UpdateGroup:
+      type: object
+      properties:
+        ecosystem:
+          type: string
+          nullable: true
+        package:
+          type: string
+        latest:
+          type: string
+          nullable: true
+        kind:
+          type: string
+          nullable: true
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/UpdateMember'
+        security:
+          allOf:
+          - $ref: '#/components/schemas/UpdateSecurity'
+          nullable: true
+        branch:
+          type: string
+        prs:
+          type: array
+          items:
+            $ref: '#/components/schemas/UpdatePr'
+        progress:
+          $ref: '#/components/schemas/ProgressEnum'
+        blocked:
+          allOf:
+          - $ref: '#/components/schemas/UpdateBlocked'
+          nullable: true
+      required:
+      - blocked
+      - branch
+      - ecosystem
+      - kind
+      - latest
+      - members
+      - package
+      - progress
+      - prs
+      - security
+    UpdateIssue:
+      type: object
+      properties:
+        repo:
+          type: string
+        number:
+          type: integer
+        url:
+          type: string
+      required:
+      - number
+      - repo
+      - url
+    UpdateMember:
+      type: object
+      properties:
+        site:
+          type: string
+        repo:
+          type: string
+        lock:
+          type: string
+          nullable: true
+        current:
+          type: string
+          nullable: true
+      required:
+      - current
+      - lock
+      - repo
+      - site
+    UpdatePr:
+      type: object
+      properties:
+        repo:
+          type: string
+        number:
+          type: integer
+        url:
+          type: string
+        checks:
+          type: string
+      required:
+      - checks
+      - number
+      - repo
+      - url
+    UpdateSecurity:
+      type: object
+      properties:
+        alerts:
+          type: integer
+        max_severity:
+          type: string
+          nullable: true
+      required:
+      - alerts
+      - max_severity
+    Updates:
+      type: object
+      properties:
+        generated_at:
+          type: string
+          format: date-time
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/UpdateGroup'
+      required:
+      - generated_at
+      - groups
     User:
       type: object
       properties:
