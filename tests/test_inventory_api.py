@@ -181,19 +181,23 @@ def test_changes_newest_first(client: APIClient, apps_db: None, code) -> None:
 def _assert_all_writes_refused(client: APIClient, code_value: str | None) -> None:
     before = App.objects.get(slug="alpha").as_dict()
     extra = {} if code_value is None else {"totp_code": code_value}
-    calls = [
-        ("post", URL, _body()),
-        ("put", f"{URL}alpha/", _body(slug="alpha")),
-        ("post", f"{URL}alpha/archive/", {}),
-        ("post", f"{URL}alpha/restore/", {}),
-    ]
-    for method, url, body in calls:
+
+    def call(method: str, url: str, body: dict[str, Any]) -> None:
         resp = getattr(client, method)(url, {**body, **extra}, format="json")
         assert resp.status_code == 403, (method, url, resp.content)
         assert resp.json() == NO_CODE
+
+    call("post", URL, _body())
+    call("put", f"{URL}alpha/", _body(slug="alpha"))
+    call("post", f"{URL}alpha/archive/", {})
     assert App.objects.count() == 1
     assert App.objects.get(slug="alpha").as_dict() == before
     assert App.objects.get(slug="alpha").archived_at is None
+    # Restore needs an archived app to get as far as the code check.
+    archived_at = timezone.now()
+    App.objects.filter(slug="alpha").update(archived_at=archived_at)
+    call("post", f"{URL}alpha/restore/", {})
+    assert App.objects.get(slug="alpha").archived_at == archived_at
     assert InventoryChange.objects.count() == 0
 
 
@@ -231,9 +235,35 @@ def test_locked_factor_writes_nothing(client: APIClient, apps_db: None, code) ->
 
 
 @pytest.mark.django_db
-def test_code_is_checked_before_validation(client: APIClient, apps_db: None) -> None:
+def test_validation_error_does_not_spend_the_code(
+    client: APIClient, apps_db: None, code
+) -> None:
+    valid = code()
+    bad = _post(client, URL, valid, **_body(slug="Bad Slug"))
+    assert bad.status_code == 400 and "slug" in bad.json()
+    # The wrong-slug PUT and the state error burn nothing either (5 writes: the
+    # throttle allows 5 per minute).
+    put = client.put(
+        f"{URL}alpha/", {**_body(slug="other"), "totp_code": valid}, format="json"
+    )
+    assert put.status_code == 400
+    restore = _post(client, f"{URL}alpha/restore/", valid)
+    assert restore.status_code == 400
+    assert InventoryChange.objects.count() == 0
+    # Same code, same TOTP step, payload fixed: it still works.
+    ok = _post(client, URL, valid, **_body())
+    assert ok.status_code == 201, ok.content
+    # ...and it is spent by the write: replaying it is refused.
+    again = _post(client, f"{URL}alpha/archive/", valid)
+    assert again.status_code == 403 and again.json() == NO_CODE
+
+
+@pytest.mark.django_db
+def test_wrong_code_with_invalid_payload_is_a_400(
+    client: APIClient, apps_db: None
+) -> None:
     resp = _post(client, URL, "000000", slug="Bad Slug")
-    assert resp.status_code == 403 and resp.json() == NO_CODE
+    assert resp.status_code == 400 and "slug" in resp.json()
 
 
 # --- validation (Review Focus 4) ---------------------------------------------

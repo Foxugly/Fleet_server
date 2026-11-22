@@ -86,9 +86,13 @@ class AppsView(_WriteThrottled):
         responses={201: AppOutSerializer},
     )
     def post(self, request: Request) -> Response:
+        # Validation first (no side effect, nothing sensitive): a form error
+        # must not spend the TOTP code.
+        fields = clean_app(_without_code(request.data))
+        if App.objects.filter(slug=fields["slug"]).exists():
+            raise ValidationError({"slug": ["This slug already exists."]})
         if not _step_up_ok(request):
             return _totp_refused()
-        fields = clean_app(_without_code(request.data))
         try:
             with transaction.atomic():
                 app = App.objects.create(**fields)
@@ -109,13 +113,13 @@ class AppDetailView(_WriteThrottled):
         responses={200: AppOutSerializer},
     )
     def put(self, request: Request, slug: str) -> Response:
-        _get_app(slug)  # 404 first: no code is spent on an unknown app
-        if not _step_up_ok(request):
-            return _totp_refused()
+        _get_app(slug)  # 404 first, then 400s, then the code: none burns it
         data = _without_code(request.data)
         if data.get("slug", slug) != slug:
             raise ValidationError({"slug": ["The slug cannot be changed."]})
         fields = clean_app({**data, "slug": slug})
+        if not _step_up_ok(request):
+            return _totp_refused()
         with transaction.atomic():
             app = _get_app(slug, lock=True)
             before = app.as_dict()
@@ -129,15 +133,18 @@ class AppDetailView(_WriteThrottled):
 class _ArchiveToggle(_WriteThrottled):
     archive = True
 
+    def _check_state(self, app: App) -> None:
+        if app.archived == self.archive:
+            state = "already archived" if self.archive else "not archived"
+            raise ValidationError({"detail": [f"This app is {state}."]})
+
     def post(self, request: Request, slug: str) -> Response:
-        _get_app(slug)
+        self._check_state(_get_app(slug))  # 404/400 before the code
         if not _step_up_ok(request):
             return _totp_refused()
         with transaction.atomic():
             app = _get_app(slug, lock=True)
-            if app.archived == self.archive:
-                state = "already archived" if self.archive else "not archived"
-                raise ValidationError({"detail": [f"This app is {state}."]})
+            self._check_state(app)  # re-checked under the row lock
             app.archived_at = timezone.now() if self.archive else None
             app.save()
             fields = app.as_dict()
