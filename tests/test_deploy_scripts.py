@@ -1,7 +1,7 @@
 """Behaviour of deploy/ssm-deploy.sh and deploy/fetch-env-from-ssm.sh.
 
 The scripts run in bash against a temp tree, with their hard-coded paths
-rewritten and the outside world (python3.12, aws, chown) stubbed on PATH.
+rewritten and the outside world (python3.14, aws, chown) stubbed on PATH.
 Skipped when bash is absent. The env-fetch Python part also runs on its own.
 """
 
@@ -140,7 +140,7 @@ if [ -n "${FAIL_ON-}" ] && [[ "$*" == *"$FAIL_ON"* ]]; then
 fi
 exit 0"""
 
-PYTHON312 = """\
+PYTHON314 = """\
 [ "$1" = -m ] && [ "$2" = venv ] || exit 2
 mkdir -p "$3/bin"
 echo new > "$3/marker"
@@ -178,13 +178,17 @@ def deploy_tree(tmp_path):
         _write(new / name, text)
     env_file = _write(tmp_path / "fleet.env", "A=b=\nSTATE=PROD\n")
     _stub(stubs, "venv-python", VENV_PYTHON.replace("@LOG@", _path(log, "-m")))
-    _stub(stubs, "python3.12", PYTHON312.replace("@STUBS@", _path(stubs, "-m")))
+    _stub(stubs, "python3.14", PYTHON314.replace("@STUBS@", _path(stubs, "-m")))
     text = (DEPLOY / "ssm-deploy.sh").read_text(encoding="utf-8")
     text = text.replace(
         "\nAPP=/srv/fleet/Fleet_server\n", f'\nAPP="{_path(app, "-m")}"\n'
     )
     text = text.replace(
         "\nENV_FILE=/run/fleet/.env\n", f'\nENV_FILE="{_path(env_file, "-m")}"\n'
+    )
+    text = text.replace(
+        "\nPYTHON=/usr/bin/python3.14\n",
+        f'\nPYTHON="{_path(stubs, "-m")}/python3.14"\n',
     )
     script = _write(tmp_path / "ssm-deploy.sh", text)
     bundle_arg = _path(app, "-m") + "/.bundle-new"

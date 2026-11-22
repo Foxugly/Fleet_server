@@ -24,7 +24,7 @@ Changing an endpoint = regenerate it: `python manage.py spectacular --file opena
 
 ## Local setup (Windows)
 
-    py -3.12 -m venv .venv
+    py -3.14 -m venv .venv
     .venv/Scripts/python.exe -m pip install --require-hashes --no-deps -r requirements.txt
     .venv/Scripts/python.exe -m pip install -r requirements-dev.txt
     copy .env.example .env
@@ -32,8 +32,7 @@ Changing an endpoint = regenerate it: `python manage.py spectacular --file opena
     .venv/Scripts/python.exe manage.py create_operator <username>
     .venv/Scripts/python.exe manage.py runserver
 
-If `py -3.12` fails (broken Microsoft Store Python), use `py -3.14 -m venv .venv`: the
-lock is universal and CI on 3.12 is the authority.
+CI and production run Python 3.14 (the lock is universal).
 
 Nothing loads `.env` automatically: settings read only the process environment, so
 without this step `manage.py` refuses to start (`STATE` is required). Load the file into the
@@ -136,7 +135,7 @@ other findings; green when clean; `stale` and `error` when data is old or collec
 
 Edit `requirements.in`, then regenerate the lock:
 
-    uv pip compile requirements.in --generate-hashes --universal --python-version 3.12 -o requirements.txt
+    uv pip compile requirements.in --generate-hashes --universal --python-version 3.14 -o requirements.txt
 
 ## Security notes
 

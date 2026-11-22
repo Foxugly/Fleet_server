@@ -35,7 +35,7 @@ A push to `main` runs CI, then `.github/workflows/deploy.yml` (OIDC role `fleet-
    `/srv/fleet/Fleet_server/.bundle-new`.
 4. Root copies `ssm-deploy.sh` from the mirror into a root-owned temp file and runs
    `sudo -u fleet bash <tmp> /srv/fleet/Fleet_server/.bundle-new <sha>`: a fresh `.venv.new`
-   (`python3.12 -m venv`, hashed lock, `pip check`), then with that venv and the new code
+   (`/usr/bin/python3.14 -m venv`, hashed lock, `pip check`), then with that venv and the new code
    `check --deploy` and only then `migrate`, then the swap of code and venv together
    (`.venv` → `.venv.prev`, `.venv.new` → `.venv`). A failure stops before the swap: the
    old code and the old `.venv` keep serving, `.venv.new` is removed, the workflow goes red.
@@ -59,7 +59,7 @@ Every step touches production: do it with Renaud's go, in this order.
 ```bash
 ss -lntp | grep -c ':8014 '                 # 0
 sudo nginx -T 2>/dev/null | grep -c fleet-api  # 0
-python3.12 --version                        # 3.12.x
+/usr/bin/python3.14 --version              # 3.14.x
 redis-cli -n 12 dbsize                      # 0
 id fleet                                    # "no such user" before step 3
 ```
