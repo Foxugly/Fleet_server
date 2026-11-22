@@ -296,3 +296,30 @@ def test_checks_success():
         }
     )
     assert collect_repo("Foxugly/x", token="t")["prs"][0]["checks"] == "success"
+
+
+@responses.activate
+def test_check_runs_403_falls_back_to_statuses():
+    """Private repo + fine-grained token: no checks=read, statuses still count."""
+    mock_all(
+        **{
+            "/commits/abc123/check-runs": resp(
+                "/commits/abc123/check-runs", status=403, json={"message": "x"}
+            ),
+            "/commits/abc123/status": {"statuses": [{"state": "failure"}]},
+        }
+    )
+    assert collect_repo("Foxugly/x", token="t")["prs"][0]["checks"] == "failure"
+
+
+@responses.activate
+def test_check_runs_other_error_still_raises():
+    mock_all(
+        **{
+            "/commits/abc123/check-runs": resp(
+                "/commits/abc123/check-runs", status=500, json={}
+            ),
+        }
+    )
+    with pytest.raises(SourceError):
+        collect_repo("Foxugly/x", token="t")

@@ -2,7 +2,7 @@
 
 import requests
 
-from .http import get_json, get_json_paginated
+from .http import SourceError, get_json, get_json_paginated
 
 API = "https://api.github.com"
 PER_PAGE = {"per_page": 100}
@@ -25,10 +25,27 @@ def _session(token: str) -> requests.Session:
     return s
 
 
+def _check_runs(session, base: str, sha: str) -> list[dict]:
+    """Check runs of a commit; [] on a 403.
+
+    Reading check runs of a private repo needs `checks=read`, which fine-grained
+    tokens cannot hold: on a 403 the PR's state falls back to commit statuses.
+    """
+    try:
+        return get_json_paginated(
+            session,
+            f"{base}/commits/{sha}/check-runs",
+            params=PER_PAGE,
+            key="check_runs",
+        )
+    except SourceError as exc:
+        if exc.status == 403:
+            return []
+        raise
+
+
 def _checks(session, base: str, sha: str) -> str:
-    runs = get_json_paginated(
-        session, f"{base}/commits/{sha}/check-runs", params=PER_PAGE, key="check_runs"
-    )
+    runs = _check_runs(session, base, sha)
     statuses = get_json(session, f"{base}/commits/{sha}/status", params=PER_PAGE)[
         "statuses"
     ]
