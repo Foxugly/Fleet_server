@@ -39,6 +39,8 @@ A push to `main` runs CI, then `.github/workflows/deploy.yml` (OIDC role `fleet-
    `check --deploy` and only then `migrate`, then the swap of code and venv together
    (`.venv` → `.venv.prev`, `.venv.new` → `.venv`). A failure stops before the swap: the
    old code and the old `.venv` keep serving, `.venv.new` is removed, the workflow goes red.
+   `.venv.prev` is only the previous venv left aside until the next deploy, **not a
+   rollback**: the code it matched is already replaced (rollback = revert on `main`, below).
    Units run `.venv/bin/python -m gunicorn` / `-m celery`: a renamed venv keeps stale
    console-script shebangs, so nothing calls `.venv/bin/<script>`.
 5. Root restarts `fleet-app-gunicorn fleet-app-celery fleet-app-celery-beat`, checks
@@ -88,8 +90,11 @@ Creates or updates `fleet-deploy` and `fleet-frontend-deploy` (both `sub` forms,
 ### 3. Unix user and PostgreSQL (root, on the box)
 
 ```bash
-# System user, no login shell, no home; its own group, NOT www-data.
-adduser --system --group --no-create-home --home /nonexistent --shell /usr/sbin/nologin fleet
+# System user, its own group `fleet` (NOT www-data, which reads every other site's .env),
+# no login shell and no home: it only runs the units and the deploy step, nothing to log in
+# with, no dotfiles for pip/celery to write. Equivalent: useradd --system --user-group
+# --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin fleet
+adduser --system --group --home /nonexistent --no-create-home --shell /usr/sbin/nologin fleet
 install -d -o root -g root -m 755 /srv/fleet
 install -d -o fleet -g fleet -m 750 /srv/fleet/Fleet_server   # the deploy does it too
 
@@ -117,6 +122,9 @@ sudo rm /root/fleet-db-password    # on the box, once the deploy works
 The script generates `SECRET_KEY` and `FLEET_MFA_ENCRYPTION_KEY` inside AWS (never replaced),
 writes `DB_PASSWORD`, asks (no echo) for `FLEET_GITHUB_READ_TOKEN` and `FLEET_SENTRY_TOKEN`,
 and for the two Sentry DSNs (skipped when empty). It prints names and types only.
+A re-run (`bash deploy/ssm-cloudshell.sh`, no file) only writes what is missing or different:
+Enter keeps the existing `DB_PASSWORD`, tokens and DSNs, and unchanged String values are not
+rewritten.
 
 | `/fleet/prod/` | Type | Value |
 |---|---|---|
@@ -139,7 +147,7 @@ the gunicorn unit only).
 ### 5. Sentry (Renaud, org owner)
 
 Create `fleet-backend` and `fleet-frontend` in `foxugly-srl` (members cannot), then re-run
-step 4 with the DSNs if they were skipped.
+step 4 (`bash deploy/ssm-cloudshell.sh`, Enter at every prompt but the DSNs) if they were skipped.
 
 ### 6. GitHub (`gh`)
 
@@ -215,6 +223,17 @@ journalctl -u fleet-app-env-fetch -b
 sudo tail -f /var/log/nginx/fleet-api-access.log /var/log/nginx/fleet-api-error.log
 ```
 
-**Rollback.** Revert the commit on `main` and let the pipeline deploy it (migrations are not
-reversed automatically). A broken vhost never stays installed: the privileged step restores
-`/etc/nginx/sites-available/fleet-api.foxugly.com.deploybak` when `nginx -t` fails.
+**Rollback.** Revert the commit on `main` and let the pipeline deploy it; that is the only
+rollback (`.venv.prev` is not one). Migrations are not reversed automatically, so **every
+migration must stay backward-compatible with the previous release**: the deploy migrates
+before the swap (old code keeps serving the new schema) and a revert runs the old code on it.
+Add columns nullable or with a default, drop or rename in a later release.
+
+A broken vhost never stays installed: the privileged step restores
+`/etc/nginx/sites-available/fleet-api.foxugly.com.deploybak` when `nginx -t` fails. But a
+deploy that fails **after** the privileged step (bundle, venv, `check --deploy`, migrate,
+health) leaves the new units, `/usr/local/sbin` scripts and vhost installed while the old code
+and `.venv` keep running: daemon-reload already loaded the new units (used at the next
+start of a service, a crash restart included) and nginx
+serves the new vhost. Fix forward or revert on `main`; the next green deploy reinstalls all of
+them from the mirror.
