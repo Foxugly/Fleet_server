@@ -111,6 +111,15 @@ jobs:
           /tmp/lock-check/bin/pip check
       - name: Lint
         run: ruff check .
+      # The unit's own arguments, read from the unit file (no drift), against the
+      # locked gunicorn: an unknown flag (23.x had no --no-control-socket) fails
+      # here, not at the first deploy. Imports the app with this job's env (STATE=DEV);
+      # no DB connection is opened.
+      - name: gunicorn accepts the unit's arguments
+        run: |
+          mapfile -t args < <(python deploy/unit_exec_args.py deploy/systemd/fleet-app-gunicorn.service gunicorn)
+          [ "${#args[@]}" -gt 0 ]
+          python -m gunicorn --check-config "${args[@]}"
       - name: Migrations are in sync with the models
         run: python manage.py makemigrations --check --dry-run
       - name: Schema is committed

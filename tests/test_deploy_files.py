@@ -1,8 +1,10 @@
 """Guards on deploy/: units, root scripts, vhost (parsing only, no AWS or systemd)."""
 
+import json
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -238,3 +240,62 @@ def test_there_are_shell_scripts_to_check():
         "iam-cloudshell.sh",
         "ssm-cloudshell.sh",
     } <= names
+
+
+# --- gunicorn arguments of the unit (final review, item 1) ---------------------
+
+UNIT_ARGS = DEPLOY / "unit_exec_args.py"
+
+# gunicorn.config imports grp/pwd and calls os.geteuid at import time: neither
+# exists on Windows. The parser itself is portable, so stub them in a child
+# process (never in the test process) to run the real argparser everywhere.
+_PARSE = """
+import json, os, sys, types
+if os.name != "posix":
+    for name in ("grp", "pwd", "fcntl"):
+        sys.modules.setdefault(name, types.ModuleType(name))
+    os.geteuid = os.getegid = lambda: 0
+from gunicorn.config import Config
+Config().parser().parse_args(json.loads(sys.argv[1]))
+"""
+
+
+def _gunicorn_args() -> list[str]:
+    res = subprocess.run(
+        [
+            sys.executable,
+            str(UNIT_ARGS),
+            str(SYSTEMD / "fleet-app-gunicorn.service"),
+            "gunicorn",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0, res.stderr
+    return res.stdout.splitlines()
+
+
+def test_unit_exec_args_extracts_the_gunicorn_arguments():
+    args = _gunicorn_args()
+    assert args[0] == "--no-control-socket"
+    assert args[-1] == "config.wsgi:application"
+    assert "--bind" in args and "127.0.0.1:8014" in args
+
+
+def test_gunicorn_accepts_the_unit_arguments():
+    """The pinned gunicorn parses ExecStart's arguments (23.x rejected one)."""
+    res = subprocess.run(
+        [sys.executable, "-c", _PARSE, json.dumps(_gunicorn_args())],
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0, res.stderr[-2000:]
+
+
+def test_ci_checks_the_gunicorn_config_from_the_unit():
+    ci = _read(DEPLOY.parent / ".github" / "workflows" / "ci.yml")
+    extract = (
+        "deploy/unit_exec_args.py deploy/systemd/fleet-app-gunicorn.service gunicorn"
+    )
+    assert extract in ci
+    assert 'python -m gunicorn --check-config "${args[@]}"' in ci
