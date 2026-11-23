@@ -34,14 +34,22 @@ class Verdict:
     state: str  # red | orange | green
     count: int
     reasons: tuple[Reason, ...] = ()  # most severe first, empty when green
+    #: Information that does not change the colour (e.g. blocked updates).
+    notes: tuple[Reason, ...] = ()
 
 
-def _verdict(red: bool, count: int, reasons: list[Reason] | None = None) -> Verdict:
+def _verdict(
+    red: bool,
+    count: int,
+    reasons: list[Reason] | None = None,
+    notes: list[Reason] | None = None,
+) -> Verdict:
     found = tuple(reasons or ())
+    info = tuple(notes or ())
     if red:
         # A red cell always shows at least one thing to look at.
-        return Verdict("red", max(count, 1), found)
-    return Verdict("orange" if count else "green", count, found)
+        return Verdict("red", max(count, 1), found, info)
+    return Verdict("orange" if count else "green", count, found, info)
 
 
 def _health(data: dict[str, Any]) -> Verdict:
@@ -101,10 +109,32 @@ def _sentry(data: dict[str, Any]) -> Verdict:
     return _verdict(False, count, [_reason("unresolved", n=count)] if count else None)
 
 
+def _blocked_note(blocked: list[dict[str, Any]]) -> Reason:
+    """`n` blocked updates; the first one named, with its first blocker."""
+    first = blocked[0]
+    by = first["blocked_by"][0] if isinstance(first["blocked_by"], list) else {}
+    return _reason(
+        "blocked_updates",
+        n=len(blocked),
+        package=str(first.get("name") or ""),
+        latest=str(first.get("latest") or ""),
+        by=str(by.get("package") or ""),
+        version=str(by.get("version") or ""),
+    )
+
+
 def _deps(data: dict[str, Any]) -> Verdict:
-    # A major bump is orange, never red.
-    count = len(data.get("outdated") or [])
-    return _verdict(False, count, [_reason("outdated", n=count)] if count else None)
+    # A major bump is orange, never red. An update another installed package holds
+    # back (`blocked_by`) cannot be done yet: it is a note, not a finding.
+    outdated = data.get("outdated") or []
+    blocked = [o for o in outdated if o.get("blocked_by")]
+    count = len(outdated) - len(blocked)
+    return _verdict(
+        False,
+        count,
+        [_reason("outdated", n=count)] if count else None,
+        [_blocked_note(blocked)] if blocked else None,
+    )
 
 
 def _box(data: dict[str, Any]) -> Verdict:
@@ -151,12 +181,14 @@ def cell(source: str, subjects: list[str], now: datetime) -> dict[str, Any]:
             "collected_at": None,
             "error": "",
             "reason": None,
+            "notes": [],
         }
 
     stale_after = STALE_FACTOR * INTERVALS[source]
     evaluate = _EVALUATORS[source]
     verdicts: list[tuple[str, tuple[Reason, ...]]] = []
     count = 0
+    notes: dict[str, Reason] = {}  # by code, `n` summed over the subjects
     ok_times: list[datetime] = []
     error = ""
     error_collected_at: datetime | None = None
@@ -166,7 +198,10 @@ def cell(source: str, subjects: list[str], now: datetime) -> dict[str, Any]:
         good = store.latest_ok(source, subject)
         if good is not None:
             ok_times.append(good.collected_at)
-            count += evaluate(good.data).count
+            verdict = evaluate(good.data)
+            count += verdict.count
+            for note in verdict.notes:
+                _merge_note(notes, note)
         if latest is None:
             verdicts.append(("stale", (_reason("never_collected"),)))
         elif not latest.ok:
@@ -194,13 +229,25 @@ def cell(source: str, subjects: list[str], now: datetime) -> dict[str, Any]:
     top = reasons[0] if reasons and state not in ("green", "none") else None
     if top is not None and top["code"] in COUNT_CODES:
         top = _reason(top["code"], n=count)
+    if state == "green" and notes:
+        # A green cell holding notes says why it is not plainly green.
+        top = next(iter(notes.values()))
     return {
         "state": state,
         "count": count,
         "collected_at": collected.isoformat() if collected else None,
         "error": error,
         "reason": top,
+        "notes": list(notes.values()),
     }
+
+
+def _merge_note(notes: dict[str, Reason], note: Reason) -> None:
+    seen = notes.get(note["code"])
+    if seen is None:
+        notes[note["code"]] = _reason(note["code"], **note["params"])
+    elif "n" in seen["params"]:
+        seen["params"]["n"] += note["params"].get("n", 0)
 
 
 def worst_rank(cells: dict[str, dict[str, Any]]) -> int:

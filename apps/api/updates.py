@@ -126,10 +126,35 @@ def _blocked(
                     if _newer(v, n := _latest_seen(deps, p, group["ecosystem"]))
                     else None
                 ),
+                "range": None,
             }
             for p, v in by
         ],
     }
+
+
+def _auto_blocked(auto: list[dict]) -> dict | None:
+    """Blockers the collector found in the members' locks (peer dependencies,
+    requires_dist), merged by (package, version): newer when any lock saw one."""
+    by: dict[tuple[str, str], dict] = {}
+    for b in auto:
+        package, version = str(b.get("package") or ""), str(b.get("version") or "")
+        if not package:
+            continue
+        seen = by.setdefault(
+            (package, version),
+            {
+                "package": package,
+                "version": version,
+                "newer": None,
+                "range": b.get("range"),
+            },
+        )
+        if not seen["newer"] and b.get("newer"):
+            seen["newer"] = str(b["newer"])
+    if not by:
+        return None
+    return {"issues": [], "by": list(by.values())}
 
 
 def _track(
@@ -163,7 +188,9 @@ def _track(
         progress = "in_progress"
     else:
         progress = "possible"
-    blocked = _blocked(group, issues, deps)
+    auto = group.pop("_auto_by", [])
+    # A [fleet] issue wins; otherwise what the locks say.
+    blocked = _blocked(group, issues, deps) or _auto_blocked(auto)
     if progress == "none" and blocked:
         retry = any(b["newer"] for b in blocked["by"])
         progress = "retry" if retry else "waiting"
@@ -210,6 +237,7 @@ def group_updates(
                     "lock": lock,
                     "current": item.get("current"),
                     "kind": item.get("kind") or "unknown",
+                    "blocked_by": item.get("blocked_by") or [],
                 }
 
     groups: list[dict] = []
@@ -242,6 +270,7 @@ def group_updates(
                     for m in members
                 ],
                 "security": _security(hits),
+                "_auto_by": [b for m in members for b in m["blocked_by"]],
             }
         )
 

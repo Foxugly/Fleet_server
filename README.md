@@ -133,6 +133,22 @@ Pure logic in `apps/api/status.py`: red for a failing health check, TLS verifica
 failure or under 14 days left, disk at 90% or more, critical/high findings; orange for
 other findings; green when clean; `stale` and `error` when data is old or collection failed.
 
+Blocked updates: the deps collector marks an outdated item `blocked_by` when an installed
+package holds it back, i.e. its constraint on the item accepts the current version but not
+the latest (e.g. `typescript` 7 while `@angular/compiler-cli` 22 declares `>=6.0 <6.1`).
+npm reads the lock's `peerDependencies` (optional peers only when installed) with the
+in-house matcher `apps/collect/sources/npm_semver.py`; Python reads `requires_dist` of each
+installed release (`/pypi/<pkg>/<ver>/json`, markers evaluated for CPython 3.14 / Linux,
+extras-only requirements skipped), cached forever in the Django cache (Redis) because a
+release never changes: one PyPI call per new (package, version), only for locks with at
+least one outdated item. A range the matcher does not understand is never blocking. Each
+blocker carries `newer` when its latest release (known for checked packages) lifts the
+block. Blocked items do not count: a deps cell with only blocked items is green, with
+`reason` and `notes` = `blocked_updates`; with others it stays orange (count = unblocked)
+and still carries the note. In `/updates/`, a group without a `[fleet]` issue but with
+blocked members gets `blocked = {issues: [], by: [...]}` and progress `waiting` (`retry`
+when a blocker's newer release lifts it).
+
 ## Dependencies
 
 Edit `requirements.in`, then regenerate the lock:
