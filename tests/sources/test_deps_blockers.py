@@ -103,6 +103,7 @@ def test_npm_unparseable_peer_is_logged(caplog):
 
 def _npm_registry(cli_latest: dict) -> None:
     responses.get(GH + "package-lock.json", body=json.dumps(NG_LOCK))
+    responses.get(GH + ".github/dependabot.yml", status=404)
     responses.get(
         "https://registry.npmjs.org/@angular%2Fcore/latest", json={"version": "22.3.0"}
     )

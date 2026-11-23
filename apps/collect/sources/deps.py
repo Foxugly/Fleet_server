@@ -9,15 +9,23 @@ A Python item whose latest release an upper bound of the project's own
 `pyproject.toml`) excludes is *held*: its first blocker is
 `{"kind": "hold", "package": "requirements.in", "version": "", "range": "<3",
 "note": <the requirement's comment>}`. Package blockers carry `"kind": "package"`.
+
+An npm item is held when an `ignore` rule of the repo's `.github/dependabot.yml`
+(npm block covering the lock's directory) skips its latest release: by
+`update-types` (`version-update:semver-major` -> range "semver-major"), by
+`versions` (an npm range), or entirely (neither given -> range "*").
 """
 
+import fnmatch
 import json
 import logging
 import re
 import tomllib
+from dataclasses import dataclass
 from urllib.parse import quote
 
 import requests
+import yaml
 from packaging.markers import InvalidMarker, default_environment
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import Specifier, SpecifierSet
@@ -473,6 +481,149 @@ def _hold(
     }
 
 
+# ------------------------------------------------------------ npm holds (Dependabot)
+
+DEPENDABOT = ".github/dependabot.yml"
+#: Dependabot update type -> bump_kind.
+_UPDATE_TYPES = {
+    "version-update:semver-major": "major",
+    "version-update:semver-minor": "minor",
+    "version-update:semver-patch": "patch",
+}
+_IGNORE_NAME = re.compile(
+    r"""^-\s*dependency-name:\s*(["']?)([^"'#\s]+)\1\s*(?:#(.*))?$"""
+)
+_IGNORE_FIELD = re.compile(r"^(?:update-types|versions)\s*:|^-\s")
+
+
+@dataclass(frozen=True)
+class IgnoreRule:
+    pattern: str  # Dependabot `dependency-name`, `*` wildcards
+    kinds: frozenset[str]  # bump kinds skipped; empty with no versions = all
+    versions: tuple[str, ...]  # npm ranges skipped
+    note: str
+
+
+def _dependabot_notes(text: str) -> dict[str, str]:
+    """{dependency-name: comment}: the same-line comment, or the comment block
+    above the group of ignore entries it heads (until a blank line or other key),
+    from its first `hold` line if any."""
+    notes: dict[str, str] = {}
+    block: list[str] = []
+    after_comment = False
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("#"):
+            if not after_comment:
+                block = []
+            block.append(line[1:].strip())
+            after_comment = True
+            continue
+        after_comment = False
+        m = _IGNORE_NAME.match(line)
+        if m:
+            start = next(
+                (i for i, c in enumerate(block) if c.lower().startswith("hold")), 0
+            )
+            above = " ".join(block[start:])
+            notes.setdefault(
+                m.group(2), _pick_comment((m.group(3) or "").strip(), above)
+            )
+        elif not line or not _IGNORE_FIELD.match(line):
+            block = []
+    return notes
+
+
+def _covers(update: dict, lock_dir: str) -> bool:
+    dirs = [update.get("directory")]
+    extra = update.get("directories")
+    if isinstance(extra, list):
+        dirs.extend(extra)
+    for d in dirs:
+        if isinstance(d, str):
+            d = d.strip("/")
+            if d == lock_dir or ("*" in d and fnmatch.fnmatchcase(lock_dir, d)):
+                return True
+    return False
+
+
+def parse_dependabot(text: str, lock_path: str) -> list[IgnoreRule]:
+    """The npm ignore rules that apply to `lock_path`. Unparsable YAML, other
+    ecosystems, directories and malformed entries give no rules."""
+    try:
+        config = yaml.safe_load(text)
+    except yaml.YAMLError:
+        log.warning("dependabot.yml unreadable: no npm holds")
+        return []
+    updates = config.get("updates") if isinstance(config, dict) else None
+    if not isinstance(updates, list):
+        return []
+    lock_dir = lock_path.rpartition("/")[0].strip("/")
+    notes = _dependabot_notes(text)
+    rules: list[IgnoreRule] = []
+    for update in updates:
+        if not isinstance(update, dict) or update.get("package-ecosystem") != "npm":
+            continue
+        if not _covers(update, lock_dir):
+            continue
+        ignores = update.get("ignore")
+        for entry in ignores if isinstance(ignores, list) else []:
+            name = entry.get("dependency-name") if isinstance(entry, dict) else None
+            if not isinstance(name, str) or not name:
+                continue
+            types = entry.get("update-types") or []
+            versions = entry.get("versions") or []
+            if isinstance(versions, str):
+                versions = [versions]
+            if not isinstance(types, list) or not isinstance(versions, list):
+                continue
+            kinds = frozenset(
+                _UPDATE_TYPES[t]
+                for t in types
+                if isinstance(t, str) and t in _UPDATE_TYPES
+            )
+            if types and not kinds:
+                continue  # only unknown update types: skip, never "ignore all"
+            rules.append(
+                IgnoreRule(
+                    name,
+                    kinds,
+                    tuple(v for v in versions if isinstance(v, str)),
+                    clean_note(notes.get(name, "")),
+                )
+            )
+    return rules
+
+
+def _npm_hold(
+    rules: list[IgnoreRule], name: str, current: str, latest: str
+) -> dict | None:
+    kind = bump_kind(current, latest)
+    for rule in rules:
+        if not fnmatch.fnmatchcase(name, rule.pattern):
+            continue
+        if rule.kinds and kind in rule.kinds:
+            rng = f"semver-{kind}"
+        elif rule.versions:
+            rng = next(
+                (v for v in rule.versions if npm_semver.satisfies(latest, v)), None
+            )
+        elif not rule.kinds:
+            rng = "*"
+        else:
+            rng = None
+        if rng is not None:
+            return {
+                "kind": "hold",
+                "package": DEPENDABOT.rsplit("/", 1)[-1],
+                "version": "",
+                "range": rng,
+                "note": rule.note,
+                "newer": None,
+            }
+    return None
+
+
 def _add_blockers(
     outdated: list[dict],
     text: str,
@@ -484,9 +635,10 @@ def _add_blockers(
     ref: str,
     holds: dict[str, tuple[SpecifierSet, str]] | None = None,
     holds_source: str = "requirements.in",
+    npm_rules: list[IgnoreRule] | None = None,
 ) -> None:
     """Set `blocked_by` on the outdated items an installed package holds back,
-    a declared hold (`holds`, Python only) first.
+    a declared hold first (`holds` for Python, `npm_rules` for npm).
 
     Each blocker's `newer` is its latest version when that release no longer
     blocks (known only for packages the collection checked), else None.
@@ -519,7 +671,10 @@ def _add_blockers(
                     )
                 unblocks = not still
             blocker["newer"] = newer[0] if unblocks else None
-        hold = None if npm else _hold(holds or {}, holds_source, name, latest)
+        if npm:
+            hold = _npm_hold(npm_rules or [], name, current, latest)
+        else:
+            hold = _hold(holds or {}, holds_source, name, latest)
         if hold is not None:
             found.insert(0, hold)
         if found:
@@ -556,18 +711,28 @@ def collect_lock(ref: str, *, token: str, requires_cache=None) -> dict:
         raise SourceError(f"no pins parsed: {ref}")
     holds: dict[str, tuple[SpecifierSet, str]] = {}
     holds_source = "requirements.in"
-    if not npm:
-        # One more GitHub call: the holds the project declares. No file, no holds;
-        # a failed read fails the lock rather than turn held items orange.
-        gh = _session(token)
-        gh.headers["Accept"] = "application/vnd.github.raw"
-        try:
+    npm_rules: list[IgnoreRule] = []
+    # One more GitHub call: the holds the project declares. No file, no holds;
+    # a failed read fails the lock rather than turn held items orange.
+    gh = _session(token)
+    gh.headers["Accept"] = "application/vnd.github.raw"
+    try:
+        if npm:
+            config = get_response(
+                gh,
+                f"{API}/repos/{repo}/contents/{DEPENDABOT}",
+                params={"ref": "main"},
+                allow_404=True,
+            )
+            if config is not None:
+                npm_rules = parse_dependabot(config.text, path)
+        else:
             found_in = _fetch_requirements_in(gh, repo, path)
-        finally:
-            gh.close()
-        if found_in is not None:
-            holds_source, text = found_in
-            holds = parse_hold_source(holds_source, text)
+            if found_in is not None:
+                holds_source, text = found_in
+                holds = parse_hold_source(holds_source, text)
+    finally:
+        gh.close()
     items = list(pins.items())
     if len(items) > MAX_PACKAGES:
         log.warning(
@@ -599,5 +764,6 @@ def collect_lock(ref: str, *, token: str, requires_cache=None) -> dict:
             ref,
             holds,
             holds_source,
+            npm_rules,
         )
     return {"ecosystem": ecosystem, "outdated": outdated, "checked": len(items)}

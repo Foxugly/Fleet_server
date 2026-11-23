@@ -43,5 +43,6 @@ box, dependency locks), Celery beat, read API behind password + TOTP. Fleet-wide
 - Holds: an upper bound in the lock's sibling `requirements.in` (else `pyproject.toml` `[project]` deps) (`<`, `<=`, `~=`, `==X.*`, `!=`
   naming the latest; never a plain `==X.Y.Z`) excluding the latest makes the item held: first
   blocker `kind: hold` with the line's comment as `note` (untrusted, capped), `held_updates` note.
+  npm: an `ignore` rule of `.github/dependabot.yml` (npm block of the lock's directory) is a hold.
 - Collectors are pure functions (token in, dict out); tokens are read-only; never read other
   sites' venvs or `/etc/letsencrypt`. Prod runs as unprivileged user `fleet` (plan 3).
