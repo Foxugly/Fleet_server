@@ -72,6 +72,7 @@ def test_registry_failure_marks_unknown():
         body=LOCK,
     )
     responses.get(GH + "requirements.in", status=404)
+    responses.get(GH + "pyproject.toml", status=404)
     responses.get(
         "https://pypi.org/pypi/django/json", json={"info": {"version": "6.1.3"}}
     )
@@ -91,7 +92,8 @@ def test_registry_failure_marks_unknown():
     assert gh.headers["Authorization"] == "Bearer tok"
     assert gh.params["ref"] == "main"
     assert responses.calls[1].request.url.startswith(GH + "requirements.in")
-    for call in responses.calls[2:]:
+    assert responses.calls[2].request.url.startswith(GH + "pyproject.toml")
+    for call in responses.calls[3:]:
         assert "Authorization" not in call.request.headers
 
 
@@ -129,6 +131,7 @@ def test_caps_at_300(monkeypatch, caplog):
     body = "".join(f"p{i}==1.0\n" for i in range(305))
     responses.get(GH + "requirements.txt", body=body)
     responses.get(GH + "requirements.in", status=404)
+    responses.get(GH + "pyproject.toml", status=404)
     responses.get(
         re.compile(r"https://pypi\.org/pypi/.*/json"),
         json={"info": {"version": "1.0"}},

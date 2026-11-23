@@ -187,6 +187,7 @@ def test_collect_marks_held_items_first():
 def test_collect_without_requirements_in_has_no_holds():
     responses.get(GH + "requirements.txt", body=LOCK)
     responses.get(GH + "requirements.in", status=404)
+    responses.get(GH + "pyproject.toml", status=404)
     _registry()
     out = collect_lock("Foxugly/x:requirements.txt", token="t")
     assert all("blocked_by" not in o for o in out["outdated"])
@@ -224,3 +225,92 @@ def test_npm_lock_reads_no_requirements_in():
     assert [c.request.url for c in responses.calls][1:] == [
         "https://registry.npmjs.org/rxjs/latest"
     ]
+
+
+PYPROJECT = """
+[build-system]
+requires = ["setuptools>=69"]
+
+[project]
+name = "x"
+dependencies = [
+  # A long explanation
+  # spread over two lines.
+  "celery>=5.5,<6",
+  "requests>=2.32,<3",  # bounded, latest allowed
+  # Background first.
+  # hold: day-0 major, revisit 2026-12-07
+  'sentry-sdk[django]>=2.76,<3',
+  "pkg-f @ https://example.invalid/f.tar.gz",
+]
+
+[project.optional-dependencies]
+dev = ["pytest<9  # not a comment, inside the string"]
+
+[tool.x]
+names = ["sentry-sdk"]
+"""
+
+
+def test_parse_pyproject_dependencies_and_comments():
+    holds = deps.parse_pyproject(PYPROJECT)
+    assert holds["celery"] == (
+        SpecifierSet(">=5.5,<6"),
+        "A long explanation spread over two lines.",
+    )
+    assert holds["requests"] == (SpecifierSet(">=2.32,<3"), "bounded, latest allowed")
+    assert holds["sentry-sdk"] == (
+        SpecifierSet(">=2.76,<3"),
+        "hold: day-0 major, revisit 2026-12-07",
+    )
+    assert "pkg-f" not in holds
+    # The whole string is the requirement; it does not parse, so no hold.
+    assert "pytest" not in holds
+
+
+@pytest.mark.parametrize("text", ["not = [toml", "project = 1", "[project]\nx = 1"])
+def test_parse_pyproject_without_usable_dependencies_has_no_holds(text):
+    assert deps.parse_pyproject(text) == {}
+
+
+@pytest.mark.parametrize(
+    ("lock", "expected"),
+    [
+        ("requirements.txt", ["requirements.in", "pyproject.toml"]),
+        (
+            "backend/requirements.txt",
+            ["backend/requirements.in", "backend/pyproject.toml"],
+        ),
+    ],
+)
+def test_hold_source_paths_end_with_pyproject(lock, expected):
+    assert deps.hold_source_paths(lock) == expected
+
+
+@responses.activate
+def test_collect_falls_back_to_pyproject():
+    responses.get(GH + "backend/requirements.txt", body=LOCK)
+    responses.get(GH + "backend/requirements.in", status=404)
+    responses.get(GH + "backend/pyproject.toml", body=PYPROJECT)
+    _registry()
+    out = collect_lock("Foxugly/x:backend/requirements.txt", token="t")
+    by_name = {o["name"]: o for o in out["outdated"]}
+    assert by_name["sentry-sdk"]["blocked_by"][0] == {
+        "kind": "hold",
+        "package": "pyproject.toml",
+        "version": "",
+        "range": "<3",
+        "note": "hold: day-0 major, revisit 2026-12-07",
+        "newer": None,
+    }
+    assert "blocked_by" not in by_name["requests"]
+
+
+@responses.activate
+def test_requirements_in_wins_over_pyproject():
+    responses.get(GH + "requirements.txt", body=LOCK)
+    responses.get(GH + "requirements.in", body="requests>=2.32\n")
+    _registry()
+    out = collect_lock("Foxugly/x:requirements.txt", token="t")
+    assert all("blocked_by" not in o for o in out["outdated"])
+    assert not any("pyproject" in c.request.url for c in responses.calls)

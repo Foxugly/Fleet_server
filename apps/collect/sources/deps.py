@@ -5,7 +5,8 @@ npm reads the lock's `peerDependencies`, Python the `requires_dist` of the insta
 releases (PyPI, cached forever: a release's metadata never changes).
 
 A Python item whose latest release an upper bound of the project's own
-`requirements.in` excludes is *held*: its first blocker is
+`requirements.in` (or, without one, the `[project]` dependencies of the sibling
+`pyproject.toml`) excludes is *held*: its first blocker is
 `{"kind": "hold", "package": "requirements.in", "version": "", "range": "<3",
 "note": <the requirement's comment>}`. Package blockers carry `"kind": "package"`.
 """
@@ -13,6 +14,7 @@ A Python item whose latest release an upper bound of the project's own
 import json
 import logging
 import re
+import tomllib
 from urllib.parse import quote
 
 import requests
@@ -316,20 +318,82 @@ def parse_requirements_in(text: str) -> dict[str, tuple[SpecifierSet, str]]:
         previous, above = above, ""
         if not body or body.startswith("-"):
             continue
-        try:
-            req = Requirement(body)
-        except InvalidRequirement:
-            continue
-        if req.url:
-            continue
-        name = _norm(req.name)
         note = clean_note(_pick_comment((m.group(1) if m else "").strip(), previous))
-        if name in out:
-            spec, old = out[name]
-            out[name] = (spec & req.specifier, old or note)
-        else:
-            out[name] = (req.specifier, note)
+        _add_requirement(out, body, note)
     return out
+
+
+#: A requirement string alone on its line of a TOML array, then an optional comment.
+_TOML_ITEM = re.compile(r"""^\s*(["'])(.+?)\1\s*,?\s*(?:#(.*))?$""")
+
+
+def _pyproject_notes(text: str) -> dict[str, str]:
+    """{requirement string: comment} for the one-per-line array items of a
+    pyproject: same-line comment or the comment block right above, read from the
+    first `hold...` line of that block when there is one."""
+    notes: dict[str, str] = {}
+    block: list[str] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("#"):
+            block.append(line[1:].strip())
+            continue
+        m = _TOML_ITEM.match(line)
+        if m:
+            start = next(
+                (i for i, c in enumerate(block) if c.lower().startswith("hold")), 0
+            )
+            above = " ".join(block[start:])
+            notes.setdefault(
+                m.group(2), _pick_comment((m.group(3) or "").strip(), above)
+            )
+        block = []
+    return notes
+
+
+def parse_pyproject(text: str) -> dict[str, tuple[SpecifierSet, str]]:
+    """`pyproject.toml` -> {normalised name: (specifier, comment)}, from
+    `[project] dependencies` and `optional-dependencies` (what `uv pip compile
+    pyproject.toml` locks). Unparsable TOML or entries give no holds."""
+    try:
+        project = tomllib.loads(text).get("project") or {}
+    except tomllib.TOMLDecodeError:
+        log.warning("pyproject.toml unreadable: no holds")
+        return {}
+    if not isinstance(project, dict):
+        return {}
+    lists = [project.get("dependencies") or []]
+    optional = project.get("optional-dependencies") or {}
+    if isinstance(optional, dict):
+        lists.extend(optional.values())
+    notes = _pyproject_notes(text)
+    out: dict[str, tuple[SpecifierSet, str]] = {}
+    for entries in lists:
+        if not isinstance(entries, list):
+            continue
+        for body in entries:
+            if isinstance(body, str):
+                _add_requirement(out, body, clean_note(notes.get(body, "")))
+    return out
+
+
+def _add_requirement(
+    out: dict[str, tuple[SpecifierSet, str]], body: str, note: str
+) -> None:
+    """Merge one requirement into `out`; a package listed twice gets both
+    specifiers. URLs and lines that do not parse are skipped."""
+    try:
+        req = Requirement(body)
+    except InvalidRequirement:
+        return
+    if req.url:
+        return
+    name = _norm(req.name)
+    if name in out:
+        spec, old = out[name]
+        out[name] = (spec & req.specifier, old or note)
+    else:
+        out[name] = (req.specifier, note)
 
 
 def _caps(spec: Specifier) -> bool:
@@ -364,9 +428,23 @@ def requirements_in_paths(lock_path: str) -> list[str]:
     return paths
 
 
+def hold_source_paths(lock_path: str) -> list[str]:
+    """`requirements_in_paths`, then the sibling `pyproject.toml` (projects that
+    lock with `uv pip compile pyproject.toml`)."""
+    folder = lock_path.rpartition("/")[0]
+    prefix = f"{folder}/" if folder else ""
+    return [*requirements_in_paths(lock_path), f"{prefix}pyproject.toml"]
+
+
+def parse_hold_source(path: str, text: str) -> dict[str, tuple[SpecifierSet, str]]:
+    if path.rsplit("/", 1)[-1] == "pyproject.toml":
+        return parse_pyproject(text)
+    return parse_requirements_in(text)
+
+
 def _fetch_requirements_in(gh, repo: str, lock_path: str) -> tuple[str, str] | None:
-    """(path, text) of the first `.in` found on main, None when there is none."""
-    for path in requirements_in_paths(lock_path):
+    """(path, text) of the first hold source found on main, None when there is none."""
+    for path in hold_source_paths(lock_path):
         resp = get_response(
             gh,
             f"{API}/repos/{repo}/contents/{quote(path, safe='/')}",
@@ -489,7 +567,7 @@ def collect_lock(ref: str, *, token: str, requires_cache=None) -> dict:
             gh.close()
         if found_in is not None:
             holds_source, text = found_in
-            holds = parse_requirements_in(text)
+            holds = parse_hold_source(holds_source, text)
     items = list(pins.items())
     if len(items) > MAX_PACKAGES:
         log.warning(
