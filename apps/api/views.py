@@ -5,7 +5,7 @@ from typing import Any
 from django.core.cache import cache
 from django.http import Http404
 from django.utils import timezone
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status as http
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -85,8 +85,21 @@ class OverviewView(APIView):
 
 
 class UpdatesView(APIView):
-    @extend_schema(operation_id="updates_retrieve", responses=UpdatesSerializer)
+    @extend_schema(
+        operation_id="updates_retrieve",
+        responses=UpdatesSerializer,
+        parameters=[
+            OpenApiParameter(
+                "scope",
+                str,
+                enum=["shared", "all"],
+                required=False,
+                description="shared (default): updates of 2+ apps; all: any app.",
+            )
+        ],
+    )
     def get(self, request: Request) -> Response:
+        min_sites = 1 if request.query_params.get("scope") == "all" else 2
         sites = load_inventory()
         locks = [lock for site in sites for lock in subjects_for(site, "deps")]
         repos = [repo for site in sites for repo in site.repos]
@@ -98,7 +111,9 @@ class UpdatesView(APIView):
         return Response(
             {
                 "generated_at": timezone.now().isoformat(),
-                "groups": group_updates(sites, deps, alerts, prs, issues),
+                "groups": group_updates(
+                    sites, deps, alerts, prs, issues, min_sites=min_sites
+                ),
             }
         )
 

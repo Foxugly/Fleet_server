@@ -467,6 +467,15 @@ paths:
   /api/v1/updates/:
     get:
       operationId: updates_retrieve
+      parameters:
+      - in: query
+        name: scope
+        schema:
+          type: string
+          enum:
+          - all
+          - shared
+        description: 'shared (default): updates of 2+ apps; all: any app.'
       tags:
       - updates
       security:
