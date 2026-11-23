@@ -100,7 +100,20 @@ def _github(data: dict[str, Any]) -> Verdict:
     if high_alerts:
         reasons.append(_reason("high_alert", n=len(high_alerts)))
     if count:
-        reasons.append(_reason("open_items", n=count))
+        # What the count is made of, so the UI can say "2 PR · 5 code alerts"
+        # rather than a bare "7 open". Summed over subjects like `n`.
+        reasons.append(
+            _reason(
+                "open_items",
+                n=count,
+                prs=len(data.get("prs") or []),
+                issues=len(data.get("issues") or []),
+                dependabot=len(dependabot),
+                code_scanning=len(code_scanning),
+                secrets=len(secrets),
+                main_ci=1 if main_failed else 0,
+            )
+        )
     return _verdict(main_failed or bool(secrets) or bool(high_alerts), count, reasons)
 
 
@@ -219,6 +232,8 @@ def cell(source: str, subjects: list[str], now: datetime) -> dict[str, Any]:
     verdicts: list[tuple[str, tuple[Reason, ...]]] = []
     count = 0
     notes: dict[str, Reason] = {}  # by code, `n` summed over the subjects
+    #: Integer params of the COUNT_CODES reasons, summed over the subjects.
+    totals: dict[str, dict[str, int]] = {}
     ok_times: list[datetime] = []
     error = ""
     error_collected_at: datetime | None = None
@@ -230,6 +245,12 @@ def cell(source: str, subjects: list[str], now: datetime) -> dict[str, Any]:
             ok_times.append(good.collected_at)
             verdict = evaluate(good.data)
             count += verdict.count
+            for found in verdict.reasons:
+                if found["code"] in COUNT_CODES:
+                    sums = totals.setdefault(found["code"], {})
+                    for key, value in found["params"].items():
+                        if isinstance(value, int) and not isinstance(value, bool):
+                            sums[key] = sums.get(key, 0) + value
             for note in verdict.notes:
                 _merge_note(notes, note)
         if latest is None:
@@ -258,7 +279,7 @@ def cell(source: str, subjects: list[str], now: datetime) -> dict[str, Any]:
         error = ""
     top = reasons[0] if reasons and state not in ("green", "none") else None
     if top is not None and top["code"] in COUNT_CODES:
-        top = _reason(top["code"], n=count)
+        top = _reason(top["code"], **{**totals.get(top["code"], {}), "n": count})
     if state == "green" and notes:
         # A green cell holding notes says why it is not plainly green.
         top = next(iter(notes.values()))

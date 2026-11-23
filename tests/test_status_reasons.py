@@ -53,16 +53,38 @@ def test_github_reason_priority() -> None:
     snap("github", "r3", {"dependabot_alerts": [{"severity": "high"}]})
     assert reason("github", ["r3"]) == {"code": "high_alert", "params": {"n": 1}}
     snap("github", "r4", {"prs": [{}, {}, {}]})
-    assert reason("github", ["r4"]) == {"code": "open_items", "params": {"n": 3}}
+    assert reason("github", ["r4"]) == {
+        "code": "open_items",
+        "params": {
+            "n": 3,
+            "prs": 3,
+            "issues": 0,
+            "dependabot": 0,
+            "code_scanning": 0,
+            "secrets": 0,
+            "main_ci": 0,
+        },
+    }
 
 
 @pytest.mark.django_db
 def test_count_reason_aggregates_subjects() -> None:
     snap("github", "r1", {"prs": [{}, {}]})
-    snap("github", "r2", {"prs": [{}, {}, {}]})
+    snap("github", "r2", {"prs": [{}], "code_scanning": [{"severity": "medium"}] * 2})
     c = cell("github", ["r1", "r2"])
     assert c["count"] == 5
-    assert c["reason"] == {"code": "open_items", "params": {"n": 5}}
+    assert c["reason"] == {
+        "code": "open_items",
+        "params": {
+            "n": 5,
+            "prs": 3,
+            "issues": 0,
+            "dependabot": 0,
+            "code_scanning": 2,
+            "secrets": 0,
+            "main_ci": 0,
+        },
+    }
 
 
 @pytest.mark.django_db
