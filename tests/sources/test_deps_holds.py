@@ -66,6 +66,20 @@ def test_comment_above_only_from_the_line_right_above():
     assert got["flask"][1] == ""
 
 
+def test_a_hold_comment_above_wins_over_a_plain_same_line_one():
+    text = (
+        "# hold: sentry-sdk 3.0 day-0 major, revisit 2026-12-07\n"
+        "sentry-sdk>=2.76,<3   # opt-in error tracking\n"
+        "# Web\n"
+        "django<7  # HOLD: wait for 7.1\n"
+    )
+    got = deps.parse_requirements_in(text)
+    assert (
+        got["sentry-sdk"][1] == "hold: sentry-sdk 3.0 day-0 major, revisit 2026-12-07"
+    )
+    assert got["django"][1] == "HOLD: wait for 7.1"
+
+
 def test_note_is_one_plain_capped_line():
     raw = "hold:\x1b[31m red‮ evil\t tab " + "x" * 400
     note = deps.parse_requirements_in(f"a<2  # {raw}\n")["a"][1]
