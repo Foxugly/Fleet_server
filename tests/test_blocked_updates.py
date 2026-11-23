@@ -13,6 +13,8 @@ from tests.test_api import cell, snap
 from tests.test_updates import A_LOCK, B_LOCK, BODY, fleet_issue, site
 
 CLI = {"package": "@angular/compiler-cli", "version": "22.3.0", "range": ">=6.0 <6.1"}
+#: What the API adds to every package blocker of a group.
+PKG = {"kind": "package", "note": ""}
 
 
 def ts(newer: str | None = None, **blocker: Any) -> dict:
@@ -102,7 +104,7 @@ def test_auto_blocked_group_is_waiting() -> None:
     g = group_updates(npm_sites(), deps, {})[0]
     assert g["package"] == "typescript"
     assert g["progress"] == "waiting"
-    assert g["blocked"] == {"issues": [], "by": [{**CLI, "newer": None}]}
+    assert g["blocked"] == {"issues": [], "by": [{**CLI, **PKG, "newer": None}]}
     assert "_auto_by" not in g
 
 
@@ -110,7 +112,7 @@ def test_auto_blocked_group_retry_when_a_blocker_unblocks() -> None:
     deps = {NPM_A: npm(ts()), NPM_B: npm(ts(newer="23.0.0"))}
     g = group_updates(npm_sites(), deps, {})[0]
     assert g["progress"] == "retry"
-    assert g["blocked"]["by"] == [{**CLI, "newer": "23.0.0"}]
+    assert g["blocked"]["by"] == [{**CLI, **PKG, "newer": "23.0.0"}]
 
 
 def test_auto_blocked_merges_distinct_blockers() -> None:
@@ -191,4 +193,4 @@ def test_updates_endpoint_serialises_auto_block(auth_client: APIClient) -> None:
     body = auth_client.get("/api/v1/updates/").json()
     g = next(g for g in body["groups"] if g["package"] == "typescript")
     assert g["progress"] == "waiting"
-    assert g["blocked"] == {"issues": [], "by": [{**CLI, "newer": None}]}
+    assert g["blocked"] == {"issues": [], "by": [{**CLI, **PKG, "newer": None}]}

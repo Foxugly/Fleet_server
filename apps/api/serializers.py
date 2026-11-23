@@ -108,11 +108,17 @@ class UpdateIssueSerializer(serializers.Serializer):
 
 
 class UpdateBlockerSerializer(serializers.Serializer):
+    #: `package`: an installed package holds the update back; `hold`: the
+    #: project's requirements.in caps it on purpose (`package` is then the file
+    #: name, `version` is empty and `note` its comment).
+    kind = serializers.ChoiceField(choices=["package", "hold"])
     package = serializers.CharField()
-    version = serializers.CharField()
+    version = serializers.CharField(allow_blank=True)
     newer = serializers.CharField(allow_null=True)
     #: The blocker's declared range (automatic blocks), null for issue-based ones.
     range = serializers.CharField(allow_null=True)
+    #: The hold's comment in requirements.in (untrusted plain text), else "".
+    note = serializers.CharField(allow_blank=True)
 
 
 class UpdateBlockedSerializer(serializers.Serializer):

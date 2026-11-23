@@ -62,11 +62,17 @@ def test_npm_blockers_direct_first_deduped_and_capped(monkeypatch):
     got = deps.npm_blockers(packages, DIRECT, "typescript", "6.0.3", "7.0.2")
     assert got == [
         {
+            "kind": "package",
             "package": "@angular/compiler-cli",
             "version": "22.3.0",
             "range": ">=6.0 <6.1",
         },
-        {"package": "@angular/build", "version": "22.3.0", "range": ">=6.0 <6.1"},
+        {
+            "kind": "package",
+            "package": "@angular/build",
+            "version": "22.3.0",
+            "range": ">=6.0 <6.1",
+        },
     ]
     assert deps.npm_blockers(packages, DIRECT, "typescript", "6.0.3", "6.0.9") == []
     monkeypatch.setattr(deps, "MAX_BLOCKERS", 1)
@@ -84,7 +90,7 @@ def test_npm_optional_peer_only_when_installed():
     assert deps.npm_blockers(packages, set(), "less", "4.1.0", "5.0.0") == []
     packages["node_modules/less"] = {"version": "4.1.0"}
     assert deps.npm_blockers(packages, set(), "less", "4.1.0", "5.0.0") == [
-        {"package": "a", "version": "1.0.0", "range": "^4"}
+        {"kind": "package", "package": "a", "version": "1.0.0", "range": "^4"}
     ]
 
 
@@ -117,6 +123,7 @@ def test_collect_npm_marks_typescript_blocked_with_newer():
     out = collect_lock("Foxugly/x:package-lock.json", token="t")
     ts = next(o for o in out["outdated"] if o["name"] == "typescript")
     assert ts["blocked_by"][0] == {
+        "kind": "package",
         "package": "@angular/compiler-cli",
         "version": "22.3.0",
         "range": ">=6.0 <6.1",
@@ -191,6 +198,7 @@ CELERY_REQUIRES = [
 @responses.activate
 def test_collect_python_blocked_by_requires_dist_and_cached():
     responses.get(GH + "requirements.txt", body=PY_LOCK)
+    responses.get(GH + "requirements.in", status=404)
     _pypi("celery", "5.6.3")
     _pypi("python-dateutil", "4.0.0")
     _pypi("kombu", "5.6.0")
@@ -208,6 +216,7 @@ def test_collect_python_blocked_by_requires_dist_and_cached():
             "kind": "major",
             "blocked_by": [
                 {
+                    "kind": "package",
                     "package": "celery",
                     "version": "5.6.3",
                     "range": "==2.9.0.post0",
@@ -235,6 +244,7 @@ def test_collect_python_blocked_by_requires_dist_and_cached():
 @responses.activate
 def test_collect_python_newer_blocker_unblocks():
     responses.get(GH + "requirements.txt", body=PY_LOCK)
+    responses.get(GH + "requirements.in", status=404)
     _pypi("celery", "5.7.0", ["python-dateutil>=2.9"])
     _pypi("python-dateutil", "4.0.0")
     _pypi("kombu", "5.6.0")
@@ -252,9 +262,10 @@ def test_collect_python_newer_blocker_unblocks():
 @responses.activate
 def test_nothing_outdated_fetches_no_release_metadata():
     responses.get(GH + "requirements.txt", body="celery==5.6.3\n")
+    responses.get(GH + "requirements.in", status=404)
     _pypi("celery", "5.6.3")
     collect_lock("Foxugly/x:requirements.txt", token="t")
-    assert len(responses.calls) == 2
+    assert len(responses.calls) == 3  # lock, requirements.in, celery
 
 
 @pytest.mark.parametrize(

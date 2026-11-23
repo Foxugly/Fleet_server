@@ -149,6 +149,22 @@ and still carries the note. In `/updates/`, a group without a `[fleet]` issue bu
 blocked members gets `blocked = {issues: [], by: [...]}` and progress `waiting` (`retry`
 when a blocker's newer release lifts it).
 
+Every blocker carries `kind`: `package` (above) or `hold`. Held updates: for a Python lock
+`<dir>/requirements.txt` the collector also reads `<dir>/requirements.in` from main (one more
+GitHub call; `requirements/base.in` too for a `requirements/` layout; missing = no holds, a
+failed read fails the lock). An outdated item whose latest release an upper bound on that
+package excludes is held: `<`, `<=`, `~=`, `==X.*`, or `!=` naming the latest. `>`, `>=` and a
+plain `==X.Y.Z` pin (Dependabot bumps those) never hold. The hold is the item's first
+blocker: `{"kind": "hold", "package": "requirements.in", "version": "", "range": "<3",
+"note": "...", "newer": null}`, `note` being the requirement's comment (same line, else
+the comment-only line right above), untrusted: control and bidi characters dropped, one
+line, 160 characters max, rendered as plain text. Held items do not count either: the cell
+gets a separate `held_updates` note (`n`, `package`, `latest`, `file`, `range`, `note`),
+next to `blocked_updates` (which then counts only the non-held items). In `/updates/` a hold
+counts only when every member of the group holds the update; such a group is `waiting`
+on `by = [{kind: hold, ...}]`. npm has no equivalent yet. How to declare a hold:
+`OPERATIONS.md` §3.28.
+
 ## Dependencies
 
 Edit `requirements.in`, then regenerate the lock:

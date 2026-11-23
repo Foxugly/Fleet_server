@@ -109,6 +109,31 @@ def _sentry(data: dict[str, Any]) -> Verdict:
     return _verdict(False, count, [_reason("unresolved", n=count)] if count else None)
 
 
+def _hold_of(item: dict[str, Any]) -> dict[str, Any] | None:
+    """The declared hold (`kind: hold` blocker) of an outdated item, if any."""
+    blockers = item.get("blocked_by")
+    if not isinstance(blockers, list):
+        return None
+    return next(
+        (b for b in blockers if isinstance(b, dict) and b.get("kind") == "hold"), None
+    )
+
+
+def _held_note(held: list[dict[str, Any]]) -> Reason:
+    """`n` held updates; the first one named, with its file, range and comment."""
+    first = held[0]
+    hold = _hold_of(first) or {}
+    return _reason(
+        "held_updates",
+        n=len(held),
+        package=str(first.get("name") or ""),
+        latest=str(first.get("latest") or ""),
+        file=str(hold.get("package") or ""),
+        range=str(hold.get("range") or ""),
+        note=str(hold.get("note") or ""),
+    )
+
+
 def _blocked_note(blocked: list[dict[str, Any]]) -> Reason:
     """`n` blocked updates; the first one named, with its first blocker."""
     first = blocked[0]
@@ -125,15 +150,20 @@ def _blocked_note(blocked: list[dict[str, Any]]) -> Reason:
 
 def _deps(data: dict[str, Any]) -> Verdict:
     # A major bump is orange, never red. An update another installed package holds
-    # back (`blocked_by`) cannot be done yet: it is a note, not a finding.
+    # back, or the project's requirements.in holds on purpose (`blocked_by`), cannot
+    # be done yet: it is a note, not a finding.
     outdated = data.get("outdated") or []
-    blocked = [o for o in outdated if o.get("blocked_by")]
-    count = len(outdated) - len(blocked)
+    stuck = [o for o in outdated if o.get("blocked_by")]
+    held = [o for o in stuck if _hold_of(o) is not None]
+    blocked = [o for o in stuck if _hold_of(o) is None]
+    count = len(outdated) - len(stuck)
+    notes = []
+    if blocked:
+        notes.append(_blocked_note(blocked))
+    if held:
+        notes.append(_held_note(held))
     return _verdict(
-        False,
-        count,
-        [_reason("outdated", n=count)] if count else None,
-        [_blocked_note(blocked)] if blocked else None,
+        False, count, [_reason("outdated", n=count)] if count else None, notes
     )
 
 
