@@ -636,6 +636,14 @@ components:
       - actions_allowed
       - deployed
       - totp_code
+    BlockerKindEnum:
+      enum:
+      - package
+      - hold
+      type: string
+      description: |-
+        * `package` - package
+        * `hold` - hold
     Box:
       type: object
       properties:
@@ -696,14 +704,6 @@ components:
       required:
       - code
       - detail
-    KindEnum:
-      enum:
-      - package
-      - hold
-      type: string
-      description: |-
-        * `package` - package
-        * `hold` - hold
     Login:
       type: object
       properties:
@@ -1012,7 +1012,7 @@ components:
       type: object
       properties:
         kind:
-          $ref: '#/components/schemas/KindEnum'
+          $ref: '#/components/schemas/BlockerKindEnum'
         package:
           type: string
         version:

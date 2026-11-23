@@ -1,6 +1,8 @@
 from rest_framework import serializers
 
 STATES = ["green", "orange", "red", "stale", "error", "none"]
+#: `UpdateBlocker.kind`; named `BlockerKindEnum` in the schema (settings).
+BLOCKER_KINDS = ["package", "hold"]
 
 
 class ReasonSerializer(serializers.Serializer):
@@ -111,7 +113,7 @@ class UpdateBlockerSerializer(serializers.Serializer):
     #: `package`: an installed package holds the update back; `hold`: the
     #: project's requirements.in caps it on purpose (`package` is then the file
     #: name, `version` is empty and `note` its comment).
-    kind = serializers.ChoiceField(choices=["package", "hold"])
+    kind = serializers.ChoiceField(choices=BLOCKER_KINDS)
     package = serializers.CharField()
     version = serializers.CharField(allow_blank=True)
     newer = serializers.CharField(allow_null=True)
