@@ -199,6 +199,7 @@ CELERY_REQUIRES = [
 def test_collect_python_blocked_by_requires_dist_and_cached():
     responses.get(GH + "requirements.txt", body=PY_LOCK)
     responses.get(GH + "requirements.in", status=404)
+    responses.get(GH + "pyproject.toml", status=404)
     _pypi("celery", "5.6.3")
     _pypi("python-dateutil", "4.0.0")
     _pypi("kombu", "5.6.0")
@@ -245,6 +246,7 @@ def test_collect_python_blocked_by_requires_dist_and_cached():
 def test_collect_python_newer_blocker_unblocks():
     responses.get(GH + "requirements.txt", body=PY_LOCK)
     responses.get(GH + "requirements.in", status=404)
+    responses.get(GH + "pyproject.toml", status=404)
     _pypi("celery", "5.7.0", ["python-dateutil>=2.9"])
     _pypi("python-dateutil", "4.0.0")
     _pypi("kombu", "5.6.0")
@@ -263,9 +265,10 @@ def test_collect_python_newer_blocker_unblocks():
 def test_nothing_outdated_fetches_no_release_metadata():
     responses.get(GH + "requirements.txt", body="celery==5.6.3\n")
     responses.get(GH + "requirements.in", status=404)
+    responses.get(GH + "pyproject.toml", status=404)
     _pypi("celery", "5.6.3")
     collect_lock("Foxugly/x:requirements.txt", token="t")
-    assert len(responses.calls) == 3  # lock, requirements.in, celery
+    assert len(responses.calls) == 4  # lock, requirements.in, pyproject.toml, celery
 
 
 @pytest.mark.parametrize(

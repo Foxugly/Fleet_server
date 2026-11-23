@@ -151,8 +151,11 @@ when a blocker's newer release lifts it).
 
 Every blocker carries `kind`: `package` (above) or `hold`. Held updates: for a Python lock
 `<dir>/requirements.txt` the collector also reads `<dir>/requirements.in` from main (one more
-GitHub call; `requirements/base.in` too for a `requirements/` layout; missing = no holds, a
-failed read fails the lock). An outdated item whose latest release an upper bound on that
+GitHub call; `requirements/base.in` too for a `requirements/` layout; without any `.in`, the
+sibling `pyproject.toml` and its `[project]` `dependencies` + `optional-dependencies`, for
+projects locked with `uv pip compile pyproject.toml` like Fabric; its note is the item's
+same-line comment or the comment block right above, from its first `hold` line if any;
+missing = no holds, a failed read fails the lock, unparsable TOML = no holds). An outdated item whose latest release an upper bound on that
 package excludes is held: `<`, `<=`, `~=`, `==X.*`, or `!=` naming the latest. `>`, `>=` and a
 plain `==X.Y.Z` pin (Dependabot bumps those) never hold. The hold is the item's first
 blocker: `{"kind": "hold", "package": "requirements.in", "version": "", "range": "<3",

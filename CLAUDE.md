@@ -40,7 +40,7 @@ box, dependency locks), Celery beat, read API behind password + TOTP. Fleet-wide
 - Deps: an item another installed package holds back carries `blocked_by` (npm peers via
   `sources/npm_semver.py`, Python `requires_dist` cached forever); it does not count in the
   cell (green + `blocked_updates` note when all are blocked). Details: README « Colour rules ».
-- Holds: an upper bound in the lock's sibling `requirements.in` (`<`, `<=`, `~=`, `==X.*`, `!=`
+- Holds: an upper bound in the lock's sibling `requirements.in` (else `pyproject.toml` `[project]` deps) (`<`, `<=`, `~=`, `==X.*`, `!=`
   naming the latest; never a plain `==X.Y.Z`) excluding the latest makes the item held: first
   blocker `kind: hold` with the line's comment as `note` (untrusted, capped), `held_updates` note.
 - Collectors are pure functions (token in, dict out); tokens are read-only; never read other
