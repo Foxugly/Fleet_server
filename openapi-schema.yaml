@@ -675,10 +675,15 @@ components:
           allOf:
           - $ref: '#/components/schemas/Reason'
           nullable: true
+        notes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Reason'
       required:
       - collected_at
       - count
       - error
+      - notes
       - reason
       - state
     Error:
@@ -1005,9 +1010,13 @@ components:
         newer:
           type: string
           nullable: true
+        range:
+          type: string
+          nullable: true
       required:
       - newer
       - package
+      - range
       - version
     UpdateGroup:
       type: object

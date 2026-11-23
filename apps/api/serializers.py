@@ -14,6 +14,7 @@ class CellSerializer(serializers.Serializer):
     collected_at = serializers.DateTimeField(allow_null=True)
     error = serializers.CharField(allow_blank=True)
     reason = ReasonSerializer(allow_null=True)
+    notes = ReasonSerializer(many=True)
 
 
 class SiteCellsSerializer(serializers.Serializer):
@@ -110,6 +111,8 @@ class UpdateBlockerSerializer(serializers.Serializer):
     package = serializers.CharField()
     version = serializers.CharField()
     newer = serializers.CharField(allow_null=True)
+    #: The blocker's declared range (automatic blocks), null for issue-based ones.
+    range = serializers.CharField(allow_null=True)
 
 
 class UpdateBlockedSerializer(serializers.Serializer):

@@ -352,7 +352,14 @@ def test_waiting_when_blocker_not_outdated() -> None:
     assert g["progress"] == "waiting"
     assert g["blocked"] == {
         "issues": [{"repo": "Foxugly/a", "number": 8, "url": "https://x/issues/8"}],
-        "by": [{"package": "djangorestframework", "version": "3.16.1", "newer": None}],
+        "by": [
+            {
+                "package": "djangorestframework",
+                "version": "3.16.1",
+                "newer": None,
+                "range": None,
+            }
+        ],
     }
 
 
@@ -378,7 +385,9 @@ def test_parsing_tolerates_crlf_case_and_noise() -> None:
     )
     g = group_updates(sites, deps, {}, {}, {"Foxugly/b": [fleet_issue(1, body)]})[0]
     assert g["progress"] == "waiting"
-    assert g["blocked"]["by"] == [{"package": "drf", "version": "1.0", "newer": None}]
+    assert g["blocked"]["by"] == [
+        {"package": "drf", "version": "1.0", "newer": None, "range": None}
+    ]
 
 
 def test_issue_for_other_version_or_non_member_ignored() -> None:

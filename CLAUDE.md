@@ -37,5 +37,8 @@ box, dependency locks), Celery beat, read API behind password + TOTP. Fleet-wide
   GitHub read token must cover the new repo. `get_site` returns active apps only.
 - Tests start with the 17 apps imported by migration 0002: use `tests.helpers.make_apps(yaml)`
   to replace them with a deterministic inventory.
+- Deps: an item another installed package holds back carries `blocked_by` (npm peers via
+  `sources/npm_semver.py`, Python `requires_dist` cached forever); it does not count in the
+  cell (green + `blocked_updates` note when all are blocked). Details: README « Colour rules ».
 - Collectors are pure functions (token in, dict out); tokens are read-only; never read other
   sites' venvs or `/etc/letsencrypt`. Prod runs as unprivileged user `fleet` (plan 3).

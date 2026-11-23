@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterable
 from celery import shared_task
 from celery.exceptions import SoftTimeLimitExceeded
 from django.conf import settings
+from django.core.cache import cache
 
 from apps.inventory.loader import load_inventory
 
@@ -110,7 +111,7 @@ def collect_deps() -> None:
         refs,
         token,
         "FLEET_GITHUB_READ_TOKEN",
-        lambda ref: deps.collect_lock(ref, token=token),
+        lambda ref: deps.collect_lock(ref, token=token, requires_cache=cache),
     )
 
 
