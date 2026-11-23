@@ -284,12 +284,22 @@ def clean_note(text: str) -> str:
     return text
 
 
+def _pick_comment(same_line: str, above: str) -> str:
+    above = above.strip()
+    for text in (same_line, above):
+        if text.lower().startswith("hold"):
+            return text
+    return same_line or above
+
+
 def parse_requirements_in(text: str) -> dict[str, tuple[SpecifierSet, str]]:
     """`requirements.in` -> {normalised name: (specifier, comment)}.
 
-    The comment is the one on the requirement's line, else a comment-only line
-    right above it. Options (`-r`, `-c`, `--index-url`...), URLs and lines that
-    do not parse are skipped; a package listed twice gets both specifiers.
+    The comment is the one on the requirement's line or on a comment-only line
+    right above it, a `hold...` one first (`# hold: <why>, revisit <date>` above a
+    line that already has its own comment), else the same-line one. Options
+    (`-r`, `-c`, `--index-url`...), URLs and lines that do not parse are
+    skipped; a package listed twice gets both specifiers.
     """
     out: dict[str, tuple[SpecifierSet, str]] = {}
     above = ""
@@ -313,7 +323,7 @@ def parse_requirements_in(text: str) -> dict[str, tuple[SpecifierSet, str]]:
         if req.url:
             continue
         name = _norm(req.name)
-        note = clean_note((m.group(1) if m else "").strip() or previous)
+        note = clean_note(_pick_comment((m.group(1) if m else "").strip(), previous))
         if name in out:
             spec, old = out[name]
             out[name] = (spec & req.specifier, old or note)

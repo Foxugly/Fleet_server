@@ -156,8 +156,8 @@ failed read fails the lock). An outdated item whose latest release an upper boun
 package excludes is held: `<`, `<=`, `~=`, `==X.*`, or `!=` naming the latest. `>`, `>=` and a
 plain `==X.Y.Z` pin (Dependabot bumps those) never hold. The hold is the item's first
 blocker: `{"kind": "hold", "package": "requirements.in", "version": "", "range": "<3",
-"note": "...", "newer": null}`, `note` being the requirement's comment (same line, else
-the comment-only line right above), untrusted: control and bidi characters dropped, one
+"note": "...", "newer": null}`, `note` being the requirement's comment (same line or the
+comment-only line right above, one starting with `hold` first, else the same-line one), untrusted: control and bidi characters dropped, one
 line, 160 characters max, rendered as plain text. Held items do not count either: the cell
 gets a separate `held_updates` note (`n`, `package`, `latest`, `file`, `range`, `note`),
 next to `blocked_updates` (which then counts only the non-held items). In `/updates/` a hold
