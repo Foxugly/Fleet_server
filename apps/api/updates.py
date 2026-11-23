@@ -227,7 +227,10 @@ def group_updates(
     alerts: dict[str, list[dict]],
     prs: dict[str, list[dict]] | None = None,
     issues: dict[str, list[dict]] | None = None,
+    min_sites: int = 2,
 ) -> list[dict]:
+    """Updates of at least `min_sites` sites: 2 for the shared panel, 1 for every update
+    (the « all apps » prompt)."""
     site_repos = {s.slug: s.repos for s in sites}
 
     def repo_alerts(repo: str, matches) -> list[dict]:
@@ -270,7 +273,7 @@ def group_updates(
         ecosystem, name_key, latest = key
         members = list(found.values())
         member_sites = {m["site"] for m in members}
-        if len(member_sites) < 2:
+        if len(member_sites) < min_sites:
             continue
         kind = max((m["kind"] for m in members), key=lambda k: KIND_RANK.get(k, 0))
         # Only alerts from the member sites' repos, each repo counted once.
@@ -310,7 +313,7 @@ def group_updates(
     for norm, per_repo in alert_pkgs.items():
         if norm in kept or shown[norm] in kept:
             continue
-        if len({s for s, _ in per_repo}) < 2:
+        if len({s for s, _ in per_repo}) < min_sites:
             continue
         by_repo: dict[str, list[dict]] = {}
         for (_s, repo), items in per_repo.items():

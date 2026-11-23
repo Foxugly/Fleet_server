@@ -87,6 +87,16 @@ def test_single_site_is_not_a_group() -> None:
     assert len(groups[0]["members"]) == 3
 
 
+def test_min_sites_one_keeps_single_site_updates() -> None:
+    sites = [site("a", (A_LOCK,)), site("b", (B_LOCK,))]
+    deps = {A_LOCK: dep("django", "6.0", "6.1", "minor")}
+    alerts = {"Foxugly/b": [{"package": "lodash", "severity": "high"}]}
+    assert group_updates(sites, deps, alerts) == []
+    groups = group_updates(sites, deps, alerts, min_sites=1)
+    assert sorted(g["package"] for g in groups) == ["django", "lodash"]
+    assert all(g["branch"] and g["progress"] == "none" for g in groups)
+
+
 def test_name_normalisation_merges_spellings() -> None:
     sites = [site("a", (A_LOCK,)), site("b", (B_LOCK,))]
     deps = {
@@ -638,3 +648,15 @@ def test_malformed_tokens_are_dropped() -> None:
     only_bad = "Fleet-Update: django 6.1.2\nFleet-Blocked-By: <script> 1.0\n"
     g = run_blocked(only_bad)
     assert g["blocked"] is None
+
+
+@pytest.mark.django_db
+def test_updates_scope_all_includes_single_app_updates(auth_client: APIClient) -> None:
+    make_apps(THREE_SITES)
+    snap("deps", "Foxugly/alpha:requirements.txt", dep("django", "6.0", "6.1", "minor"))
+    assert auth_client.get("/api/v1/updates/").json()["groups"] == []
+    assert auth_client.get("/api/v1/updates/?scope=shared").json()["groups"] == []
+    groups = auth_client.get("/api/v1/updates/?scope=all").json()["groups"]
+    assert [(g["package"], [m["site"] for m in g["members"]]) for g in groups] == [
+        ("django", ["alpha"])
+    ]
