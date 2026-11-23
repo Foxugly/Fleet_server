@@ -214,17 +214,20 @@ def test_collect_fails_when_requirements_in_is_unreadable():
 
 
 @responses.activate
-def test_npm_lock_reads_no_requirements_in():
+def test_npm_lock_reads_dependabot_not_requirements_in():
     responses.get(
         GH + "package-lock.json",
         body='{"packages": {"": {"dependencies": {"rxjs": "^7"}},'
         ' "node_modules/rxjs": {"version": "7.8.1"}}}',
     )
+    responses.get(GH + ".github/dependabot.yml", status=404)
     responses.get("https://registry.npmjs.org/rxjs/latest", json={"version": "7.8.2"})
-    collect_lock("Foxugly/x:package-lock.json", token="t")
-    assert [c.request.url for c in responses.calls][1:] == [
-        "https://registry.npmjs.org/rxjs/latest"
+    out = collect_lock("Foxugly/x:package-lock.json", token="t")
+    assert [c.request.url.split("?")[0] for c in responses.calls][1:] == [
+        GH + ".github/dependabot.yml",
+        "https://registry.npmjs.org/rxjs/latest",
     ]
+    assert "blocked_by" not in out["outdated"][0]
 
 
 PYPROJECT = """
@@ -314,3 +317,128 @@ def test_requirements_in_wins_over_pyproject():
     out = collect_lock("Foxugly/x:requirements.txt", token="t")
     assert all("blocked_by" not in o for o in out["outdated"])
     assert not any("pyproject" in c.request.url for c in responses.calls)
+
+
+DEPENDABOT = """
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    ignore:
+      # Angular majors are a decision,
+      # not routine.
+      - dependency-name: "@angular/*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@angular-devkit/*"
+        update-types:
+          - "version-update:semver-major"
+
+      - dependency-name: typescript  # hold: waits for Angular 23
+        versions: [">=7"]
+      - dependency-name: "left-pad"
+      - dependency-name: "odd"
+        update-types: ["version-update:semver-unknown"]
+  - package-ecosystem: "npm"
+    directory: "/other"
+    ignore:
+      - dependency-name: "rxjs"
+  - package-ecosystem: "pip"
+    directory: "/frontend"
+    ignore:
+      - dependency-name: "zone.js"
+"""
+
+
+def test_parse_dependabot_rules_for_the_lock_directory():
+    rules = deps.parse_dependabot(DEPENDABOT, "frontend/package-lock.json")
+    by = {r.pattern: r for r in rules}
+    assert set(by) == {"@angular/*", "@angular-devkit/*", "typescript", "left-pad"}
+    assert by["@angular/*"].kinds == {"major"}
+    assert by["@angular/*"].note == "Angular majors are a decision, not routine."
+    assert by["@angular-devkit/*"].kinds == {"major"}
+    assert by["@angular-devkit/*"].note == "Angular majors are a decision, not routine."
+    assert by["typescript"].versions == (">=7",)
+    assert by["typescript"].note == "hold: waits for Angular 23"
+    assert by["left-pad"].kinds == frozenset() and by["left-pad"].versions == ()
+    assert by["left-pad"].note == ""
+    assert deps.parse_dependabot(DEPENDABOT, "package-lock.json") == []
+
+
+@pytest.mark.parametrize(
+    "text", ["updates: [", "version: 2", "updates: 3", "updates: [1, {ignore: 2}]"]
+)
+def test_parse_dependabot_unusable_gives_no_rules(text):
+    assert deps.parse_dependabot(text, "package-lock.json") == []
+
+
+def test_dependabot_directories_globs():
+    text = "\n".join(
+        [
+            "updates:",
+            "  - package-ecosystem: npm",
+            "    directories: ['/apps/*']",
+            "    ignore:",
+            "      - dependency-name: x",
+        ]
+    )
+    rules = deps.parse_dependabot(text, "apps/web/package-lock.json")
+    assert [r.pattern for r in rules] == ["x"]
+    assert deps.parse_dependabot(text, "package-lock.json") == []
+
+
+@pytest.mark.parametrize(
+    ("name", "current", "latest", "expected"),
+    [
+        ("@angular/core", "22.1.0", "23.0.0", "semver-major"),
+        ("@angular/core", "22.1.0", "22.2.0", None),  # minor not ignored
+        ("@angular-devkit/build-angular", "22.0.0", "23.0.1", "semver-major"),
+        ("typescript", "6.0.2", "7.0.0", ">=7"),
+        ("typescript", "6.0.2", "6.1.0", None),
+        ("left-pad", "1.0.0", "1.0.1", "*"),
+        ("rxjs", "7.8.1", "8.0.0", None),  # other directory's rule
+    ],
+)
+def test_npm_hold(name, current, latest, expected):
+    rules = deps.parse_dependabot(DEPENDABOT, "frontend/package-lock.json")
+    hold = deps._npm_hold(rules, name, current, latest)
+    assert (hold or {}).get("range") == expected
+    if hold:
+        assert hold["kind"] == "hold" and hold["package"] == "dependabot.yml"
+
+
+@responses.activate
+def test_collect_npm_marks_dependabot_holds_first():
+    responses.get(
+        GH + "frontend/package-lock.json",
+        body='{"packages": {"": {"dependencies":'
+        ' {"@angular/core": "^22", "rxjs": "^7"}},'
+        ' "node_modules/@angular/core": {"version": "22.1.0"},'
+        ' "node_modules/rxjs": {"version": "7.8.1"}}}',
+    )
+    responses.get(GH + ".github/dependabot.yml", body=DEPENDABOT)
+    responses.get(
+        "https://registry.npmjs.org/@angular%2Fcore/latest", json={"version": "23.0.0"}
+    )
+    responses.get("https://registry.npmjs.org/rxjs/latest", json={"version": "8.0.0"})
+    out = collect_lock("Foxugly/x:frontend/package-lock.json", token="t")
+    by_name = {o["name"]: o for o in out["outdated"]}
+    assert by_name["@angular/core"]["blocked_by"][0] == {
+        "kind": "hold",
+        "package": "dependabot.yml",
+        "version": "",
+        "range": "semver-major",
+        "note": "Angular majors are a decision, not routine.",
+        "newer": None,
+    }
+    assert "blocked_by" not in by_name["rxjs"]
+
+
+@responses.activate
+def test_collect_npm_fails_when_dependabot_is_unreadable():
+    responses.get(
+        GH + "package-lock.json",
+        body='{"packages": {"node_modules/a": {"version": "1.0.0"}}}',
+    )
+    responses.get(GH + ".github/dependabot.yml", status=500)
+    with pytest.raises(SourceError):
+        collect_lock("Foxugly/x:package-lock.json", token="t")

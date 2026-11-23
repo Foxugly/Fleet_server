@@ -103,6 +103,7 @@ def test_collect_npm_scoped_and_path():
         GH + "web/package-lock.json",
         body=(FIX / "package-lock.json").read_text(),
     )
+    responses.get(GH + ".github/dependabot.yml", status=404)
     responses.get(
         "https://registry.npmjs.org/@angular%2Fcore/latest", json={"version": "22.0.0"}
     )

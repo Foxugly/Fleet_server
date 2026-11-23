@@ -165,7 +165,14 @@ line, 160 characters max, rendered as plain text. Held items do not count either
 gets a separate `held_updates` note (`n`, `package`, `latest`, `file`, `range`, `note`),
 next to `blocked_updates` (which then counts only the non-held items). In `/updates/` a hold
 counts only when every member of the group holds the update; such a group is `waiting`
-on `by = [{kind: hold, ...}]`. npm has no equivalent yet. How to declare a hold:
+on `by = [{kind: hold, ...}]`. npm holds come from the repo's `.github/dependabot.yml`
+(one more GitHub call per npm lock; missing = no holds, a failed read fails the lock,
+unparsable YAML = no holds): an `ignore` rule of an `npm` block whose `directory` (or a
+`directories` glob) is the lock's folder holds an item when its `dependency-name` (`*`
+wildcards) matches and the latest release is a bump of an ignored `update-types`
+(`range: "semver-major"`...), satisfies one of its `versions` (npm range, `range` = that
+range), or the rule has neither (`range: "*"`); `package` is `dependabot.yml`, `note` the
+entry's same-line comment or the comment block heading its group. How to declare a hold:
 `OPERATIONS.md` §3.28.
 
 ## Dependencies
