@@ -636,6 +636,14 @@ components:
       - actions_allowed
       - deployed
       - totp_code
+    BlockerKindEnum:
+      enum:
+      - package
+      - hold
+      type: string
+      description: |-
+        * `package` - package
+        * `hold` - hold
     Box:
       type: object
       properties:
@@ -1003,6 +1011,8 @@ components:
     UpdateBlocker:
       type: object
       properties:
+        kind:
+          $ref: '#/components/schemas/BlockerKindEnum'
         package:
           type: string
         version:
@@ -1013,8 +1023,12 @@ components:
         range:
           type: string
           nullable: true
+        note:
+          type: string
       required:
+      - kind
       - newer
+      - note
       - package
       - range
       - version

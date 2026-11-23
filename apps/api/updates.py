@@ -119,6 +119,8 @@ def _blocked(
         "issues": found,
         "by": [
             {
+                "kind": "package",
+                "note": "",
                 "package": p,
                 "version": v,
                 "newer": (
@@ -135,26 +137,48 @@ def _blocked(
 
 def _auto_blocked(auto: list[dict]) -> dict | None:
     """Blockers the collector found in the members' locks (peer dependencies,
-    requires_dist), merged by (package, version): newer when any lock saw one."""
-    by: dict[tuple[str, str], dict] = {}
+    requires_dist, declared holds), merged by (kind, package, version): newer
+    when any lock saw one, the first non-empty note."""
+    by: dict[tuple[str, str, str], dict] = {}
     for b in auto:
         package, version = str(b.get("package") or ""), str(b.get("version") or "")
+        kind = "hold" if b.get("kind") == "hold" else "package"
         if not package:
             continue
         seen = by.setdefault(
-            (package, version),
+            (kind, package, version),
             {
+                "kind": kind,
                 "package": package,
                 "version": version,
                 "newer": None,
                 "range": b.get("range"),
+                "note": "",
             },
         )
         if not seen["newer"] and b.get("newer"):
             seen["newer"] = str(b["newer"])
+        if not seen["note"] and b.get("note"):
+            seen["note"] = str(b["note"])
     if not by:
         return None
     return {"issues": [], "by": list(by.values())}
+
+
+def _is_hold(blocker: Any) -> bool:
+    return isinstance(blocker, dict) and blocker.get("kind") == "hold"
+
+
+def _members_blockers(members: list[dict]) -> list[dict]:
+    """The members' blockers. A declared hold counts only when every member
+    holds the update: one site that has not capped it yet can still do it."""
+    all_held = all(any(_is_hold(b) for b in m["blocked_by"]) for m in members)
+    return [
+        b
+        for m in members
+        for b in m["blocked_by"]
+        if isinstance(b, dict) and (all_held or not _is_hold(b))
+    ]
 
 
 def _track(
@@ -270,7 +294,7 @@ def group_updates(
                     for m in members
                 ],
                 "security": _security(hits),
-                "_auto_by": [b for m in members for b in m["blocked_by"]],
+                "_auto_by": _members_blockers(members),
             }
         )
 

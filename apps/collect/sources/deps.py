@@ -3,6 +3,11 @@
 An outdated item another installed package holds back carries `blocked_by`:
 npm reads the lock's `peerDependencies`, Python the `requires_dist` of the installed
 releases (PyPI, cached forever: a release's metadata never changes).
+
+A Python item whose latest release an upper bound of the project's own
+`requirements.in` excludes is *held*: its first blocker is
+`{"kind": "hold", "package": "requirements.in", "version": "", "range": "<3",
+"note": <the requirement's comment>}`. Package blockers carry `"kind": "package"`.
 """
 
 import json
@@ -13,7 +18,7 @@ from urllib.parse import quote
 import requests
 from packaging.markers import InvalidMarker, default_environment
 from packaging.requirements import InvalidRequirement, Requirement
-from packaging.specifiers import SpecifierSet
+from packaging.specifiers import Specifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
 from . import npm_semver
@@ -28,6 +33,10 @@ PYPI_RELEASE = "https://pypi.org/pypi/{name}/{version}/json"
 NPM = "https://registry.npmjs.org/{name}/latest"
 #: Blockers kept per outdated item (npm: direct dependencies first).
 MAX_BLOCKERS = 3
+#: A hold's note is untrusted repo text: plain, one line, capped.
+NOTE_MAX = 160
+#: Specifier operators that cap a version (a plain `==X.Y.Z` pin is not a hold).
+_UPPER_OPS = {"<", "<=", "~=", "!="}
 #: Requirement markers are evaluated for the box: CPython 3.14 on Linux x86_64.
 #: `extra` is empty, so extras-only requirements never apply.
 MARKER_ENV = {
@@ -150,7 +159,8 @@ def npm_blockers(
             found[(_lock_name(key), str(pkg.get("version") or ""), rng)] = None
     ordered = sorted(found, key=lambda b: (b[0] not in direct, b[0], b[1]))
     return [
-        {"package": p, "version": v, "range": r} for p, v, r in ordered[:MAX_BLOCKERS]
+        {"kind": "package", "package": p, "version": v, "range": r}
+        for p, v, r in ordered[:MAX_BLOCKERS]
     ]
 
 
@@ -240,7 +250,14 @@ def python_blockers(
         if spec is None:
             continue
         if _excludes(spec, current) is False and _excludes(spec, latest) is True:
-            found.append({"package": pkg, "version": version, "range": str(spec)})
+            found.append(
+                {
+                    "kind": "package",
+                    "package": pkg,
+                    "version": version,
+                    "range": str(spec),
+                }
+            )
             if len(found) >= MAX_BLOCKERS:
                 break
     return found
@@ -249,6 +266,123 @@ def python_blockers(
 def _python_still_blocks(requires: list[str], name: str, latest: str) -> bool:
     spec = python_constraint(requires, name)
     return spec is not None and _excludes(spec, latest) is not False
+
+
+# ------------------------------------------------------------ declared holds
+
+# pip's comment rule: `#` at the start of the line or after whitespace.
+_COMMENT = re.compile(r"(?:^|\s)#(.*)$")
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f​-‏‪-‮⁦-⁩]")
+_CONTINUATION = re.compile(r"\\\r?\n")
+
+
+def clean_note(text: str) -> str:
+    """One plain line of at most NOTE_MAX chars (control and bidi chars dropped)."""
+    text = " ".join(_CONTROL.sub(" ", text).split())
+    if len(text) > NOTE_MAX:
+        text = text[: NOTE_MAX - 1].rstrip() + "…"
+    return text
+
+
+def parse_requirements_in(text: str) -> dict[str, tuple[SpecifierSet, str]]:
+    """`requirements.in` -> {normalised name: (specifier, comment)}.
+
+    The comment is the one on the requirement's line, else a comment-only line
+    right above it. Options (`-r`, `-c`, `--index-url`...), URLs and lines that
+    do not parse are skipped; a package listed twice gets both specifiers.
+    """
+    out: dict[str, tuple[SpecifierSet, str]] = {}
+    above = ""
+    for raw in _CONTINUATION.sub(" ", text).splitlines():
+        line = raw.strip()
+        if not line:
+            above = ""
+            continue
+        if line.startswith("#"):
+            above = line[1:]
+            continue
+        m = _COMMENT.search(line)
+        body = line[: m.start()].strip() if m else line
+        previous, above = above, ""
+        if not body or body.startswith("-"):
+            continue
+        try:
+            req = Requirement(body)
+        except InvalidRequirement:
+            continue
+        if req.url:
+            continue
+        name = _norm(req.name)
+        note = clean_note((m.group(1) if m else "").strip() or previous)
+        if name in out:
+            spec, old = out[name]
+            out[name] = (spec & req.specifier, old or note)
+        else:
+            out[name] = (req.specifier, note)
+    return out
+
+
+def _caps(spec: Specifier) -> bool:
+    return spec.operator in _UPPER_OPS or (
+        spec.operator == "==" and spec.version.endswith(".*")
+    )
+
+
+def declared_hold(spec: SpecifierSet, latest: str) -> str | None:
+    """The upper-bound specifiers of `spec` that exclude `latest` (e.g. "<3"),
+    None when none does. `>`/`>=` and exact `==X.Y.Z` pins never hold."""
+    try:
+        version = Version(latest)
+    except InvalidVersion:
+        return None
+    excluding = [
+        str(s)
+        for s in sorted(spec, key=str)
+        if _caps(s) and not s.contains(version, prereleases=True)
+    ]
+    return ",".join(excluding) or None
+
+
+def requirements_in_paths(lock_path: str) -> list[str]:
+    """Where a lock's sources may live: the sibling `requirements.in`, plus
+    `requirements/base.in` for the `requirements/` directory layout."""
+    folder = lock_path.rpartition("/")[0]
+    prefix = f"{folder}/" if folder else ""
+    paths = [f"{prefix}requirements.in"]
+    if folder.rsplit("/", 1)[-1] == "requirements":
+        paths.append(f"{prefix}base.in")
+    return paths
+
+
+def _fetch_requirements_in(gh, repo: str, lock_path: str) -> tuple[str, str] | None:
+    """(path, text) of the first `.in` found on main, None when there is none."""
+    for path in requirements_in_paths(lock_path):
+        resp = get_response(
+            gh,
+            f"{API}/repos/{repo}/contents/{quote(path, safe='/')}",
+            params={"ref": "main"},
+            allow_404=True,
+        )
+        if resp is not None:
+            return path, resp.text
+    return None
+
+
+def _hold(
+    holds: dict[str, tuple[SpecifierSet, str]], source: str, name: str, latest: str
+) -> dict | None:
+    entry = holds.get(name)
+    rng = declared_hold(entry[0], latest) if entry else None
+    if entry is None or rng is None:
+        return None
+    return {
+        "kind": "hold",
+        "package": source.rsplit("/", 1)[-1],
+        "version": "",
+        "range": rng,
+        "note": entry[1],
+        "newer": None,
+    }
 
 
 def _add_blockers(
@@ -260,8 +394,11 @@ def _add_blockers(
     session,
     cache,
     ref: str,
+    holds: dict[str, tuple[SpecifierSet, str]] | None = None,
+    holds_source: str = "requirements.in",
 ) -> None:
-    """Set `blocked_by` on the outdated items an installed package holds back.
+    """Set `blocked_by` on the outdated items an installed package holds back,
+    a declared hold (`holds`, Python only) first.
 
     Each blocker's `newer` is its latest version when that release no longer
     blocks (known only for packages the collection checked), else None.
@@ -294,6 +431,9 @@ def _add_blockers(
                     )
                 unblocks = not still
             blocker["newer"] = newer[0] if unblocks else None
+        hold = None if npm else _hold(holds or {}, holds_source, name, latest)
+        if hold is not None:
+            found.insert(0, hold)
         if found:
             item["blocked_by"] = found
     if requires.fetched:
@@ -326,6 +466,20 @@ def collect_lock(ref: str, *, token: str, requires_cache=None) -> dict:
     if not pins:
         # An empty result means the format was not understood, not "all fresh".
         raise SourceError(f"no pins parsed: {ref}")
+    holds: dict[str, tuple[SpecifierSet, str]] = {}
+    holds_source = "requirements.in"
+    if not npm:
+        # One more GitHub call: the holds the project declares. No file, no holds;
+        # a failed read fails the lock rather than turn held items orange.
+        gh = _session(token)
+        gh.headers["Accept"] = "application/vnd.github.raw"
+        try:
+            found_in = _fetch_requirements_in(gh, repo, path)
+        finally:
+            gh.close()
+        if found_in is not None:
+            holds_source, text = found_in
+            holds = parse_requirements_in(text)
     items = list(pins.items())
     if len(items) > MAX_PACKAGES:
         log.warning(
@@ -347,6 +501,15 @@ def collect_lock(ref: str, *, token: str, requires_cache=None) -> dict:
                     {"name": name, "current": current, "latest": latest, "kind": kind}
                 )
         _add_blockers(
-            outdated, resp.text, npm, pins, manifests, reg, requires_cache, ref
+            outdated,
+            resp.text,
+            npm,
+            pins,
+            manifests,
+            reg,
+            requires_cache,
+            ref,
+            holds,
+            holds_source,
         )
     return {"ecosystem": ecosystem, "outdated": outdated, "checked": len(items)}

@@ -246,6 +246,7 @@ SPECTACULAR_SETTINGS = {
     "TITLE": "Fleet API",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    "ENUM_NAME_OVERRIDES": {"BlockerKindEnum": "apps.api.serializers.BLOCKER_KINDS"},
     # The schema reveals the API surface: same JWT as everything else.
     "SERVE_PERMISSIONS": ["rest_framework.permissions.IsAuthenticated"],
     "SERVE_AUTHENTICATION": [
