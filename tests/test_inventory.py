@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -50,9 +51,20 @@ def _expected_from_yaml() -> list[Site]:
 @pytest.mark.django_db
 def test_migration_imports_yaml_exactly():
     # Review Focus 1: the rows created by migration 0002 equal the old YAML, field
-    # for field (the snapshot is the YAML text as it was when imported).
+    # for field (the snapshot is the YAML text as it was when imported), plus
+    # migration 0003, which fills Fleet's own locks.
     expected = _expected_from_yaml()
     assert len(expected) == 17
+    expected = [
+        replace(
+            s,
+            python_locks=("Foxugly/Fleet_server:requirements.txt",),
+            npm_locks=("Foxugly/Fleet_frontend:package-lock.json",),
+        )
+        if s.slug == "fleet"
+        else s
+        for s in expected
+    ]
     assert load_inventory() == expected
     assert get_site("fleet").actions_allowed is False
     assert get_site("foxugly-ops").actions_allowed is False
